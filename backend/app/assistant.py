@@ -25,13 +25,13 @@ def generate_natural_response(prompt: str) -> str:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
         text = payload["candidates"][0]["content"]["parts"][0]["text"]
-
+    
     except urllib.error.HTTPError as error:
         details = error.read().decode("utf-8")
         raise RuntimeError(
             f"Erro HTTP {error.code} do Gemini: \n {details}"
         ) from error
-
+    
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"Não foi possível consultar o Gemini: {error}") from error
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
@@ -50,7 +50,7 @@ def generate_structured_response(prompt: str, response_structure: dict) -> dict:
     if not api_key:
         raise LookupError("GEMINI_API_KEY não configurada")
 
-    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={api_key}"
