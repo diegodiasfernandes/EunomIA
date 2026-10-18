@@ -1,6 +1,8 @@
 import os
 from datetime import date, timedelta
 from pathlib import Path
+from .features.chat_manager import process_message
+
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +12,7 @@ from google.auth.exceptions import GoogleAuthError
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
-from .db import initialize_database
+from .db import connect, initialize_database
 from .google_integration import (
     begin_oauth,
     finish_oauth,
@@ -44,10 +46,53 @@ class GoogleSyncRequest(BaseModel):
     email_until: date = Field(default_factory=date.today)
 
 
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    conversation_id: str | None = None
+
+
+
 @app.on_event("startup")
 def startup():
     initialize_database()
 
+@app.get("/api/dashboard")
+def get_dashboard():
+    google = integration_status()
+
+    with connect() as connection:
+        tasks = connection.execute(
+            """
+            SELECT id, title, due_at, status, source, event_id
+            FROM tasks
+            WHERE user_id = ?
+            ORDER BY due_at IS NULL, due_at
+            """,
+            ("demo",),
+        ).fetchall()
+
+    return {
+        "google": google,
+        "tasks": [dict(task) for task in tasks],
+    }
+
+
+@app.get("/api/events")
+def get_events():
+    with connect() as connection:
+        events = connection.execute(
+            """
+            SELECT *
+            FROM events
+            WHERE user_id = ?
+            ORDER BY starts_at
+            """,
+            ("demo",),
+        ).fetchall()
+
+    return {
+        "events": [dict(event) for event in events],
+    }
 
 @app.get("/api/integrations/google/status")
 def google_status():
@@ -91,3 +136,22 @@ def google_sync(request: GoogleSyncRequest | None = None):
             detail=f"Falha ao sincronizar com o Google: {error}",
         ) from error
     return {"result": result}
+
+
+@app.post("/api/chat")
+def chat(request: ChatRequest):
+    try:
+        return process_message(
+            message=request.message,
+            conversation_id=request.conversation_id,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="Assistente temporariamente indisponível.",
+        )
