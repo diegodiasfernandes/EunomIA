@@ -702,7 +702,10 @@ def sync_google(
     }
 
 
+
 def write_calendar_event(event: dict) -> str:
+    """Cria ou atualiza um compromisso no Google Agenda."""
+
     credentials = google_credentials()
 
     if credentials is None:
@@ -716,8 +719,8 @@ def write_calendar_event(event: dict) -> str:
 
     body = {
         "summary": event["title"],
-        "description": event.get("description", ""),
-        "location": event.get("location", ""),
+        "description": event.get("description") or "",
+        "location": event.get("location") or "",
         "start": {
             "dateTime": event["starts_at"],
         },
@@ -726,17 +729,28 @@ def write_calendar_event(event: dict) -> str:
         },
     }
 
-    if event.get("provider_id"):
+    provider_id = event.get("provider_id")
+
+    if provider_id:
         result = (
             calendar.events()
             .update(
                 calendarId="primary",
-                eventId=event["provider_id"],
+                eventId=provider_id,
                 body=body,
             )
             .execute()
         )
-    else:
+        return result["id"]
+
+    # Gera um ID estável a partir do ID do evento local.
+    # O UUID contém apenas caracteres aceitos pelo Google Agenda.
+    local_id = event["id"].replace("-", "").lower()
+    google_event_id = f"e{local_id}"
+
+    body["id"] = google_event_id
+
+    try:
         result = (
             calendar.events()
             .insert(
@@ -745,5 +759,20 @@ def write_calendar_event(event: dict) -> str:
             )
             .execute()
         )
+        return result["id"]
 
-    return result["id"]
+    except HttpError as error:
+        if error.resp.status == 409:
+            # O evento já existe no Google Agenda.
+            # Recupera o mesmo evento em vez de criar outro.
+            existing = (
+                calendar.events()
+                .get(
+                    calendarId="primary",
+                    eventId=google_event_id,
+                )
+                .execute()
+            )
+            return existing["id"]
+
+        raise

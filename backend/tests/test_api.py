@@ -1,3 +1,4 @@
+
 import json
 import os
 import tempfile
@@ -14,6 +15,7 @@ from app.main import app
 
 
 class GoogleIntegrationApiTests(unittest.TestCase):
+
     @classmethod
     def setUpClass(cls):
         cls.client_context = TestClient(app)
@@ -33,7 +35,10 @@ class GoogleIntegrationApiTests(unittest.TestCase):
             else "<sem corpo>",
         )
         print(f"Retorno HTTP: {response.status_code}")
-        print("Saída:", json.dumps(response.json(), ensure_ascii=False, indent=2))
+        print(
+            "Saída:",
+            json.dumps(response.json(), ensure_ascii=False, indent=2),
+        )
 
     def test_google_status_returns_connection_state(self):
         path = "/api/integrations/google/status"
@@ -44,11 +49,20 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertIn("connected", response.json())
 
     def test_google_sync_uses_the_selected_email_date_range(self):
-        result = {"calendar_events": 0, "emails": 8, "email_threads_with_events": 2}
-        request_body = {"email_since": "2026-09-01", "email_until": "2026-09-29"}
+        result = {
+            "calendar_events": 0,
+            "emails": 8,
+            "email_threads_with_events": 2,
+        }
+        request_body = {
+            "email_since": "2026-09-01",
+            "email_until": "2026-09-29",
+        }
         path = "/api/integrations/google/sync"
+
         with patch("app.main.sync_google", return_value=result) as sync:
             response = self.client.post(path, json=request_body)
+
         self.show_exchange("POST", path, request_body, response)
 
         self.assertEqual(response.status_code, 200)
@@ -58,19 +72,29 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertEqual(sync.call_args.args[1].isoformat(), "2026-09-29")
 
     def test_google_sync_rejects_an_invalid_email_date_range(self):
-        request_body = {"email_since": "2026-09-29", "email_until": "2026-09-01"}
+        request_body = {
+            "email_since": "2026-09-29",
+            "email_until": "2026-09-01",
+        }
         path = "/api/integrations/google/sync"
+
         with patch("app.main.sync_google") as sync:
             response = self.client.post(path, json=request_body)
+
         self.show_exchange("POST", path, request_body, response)
 
         self.assertEqual(response.status_code, 422)
         sync.assert_not_called()
 
     def test_non_google_routes_are_not_registered(self):
-        for path in ("/api/events", "/api/chat", "/api/mock/extracted-events-deadlines"):
-            with self.subTest(path=path):
-                self.assertEqual(self.client.get(path).status_code, 404)
+        path = "/api/mock/extracted-events-deadlines"
+        self.assertEqual(self.client.get(path).status_code, 404)
+
+    def test_events_route_is_registered(self):
+        response = self.client.get("/api/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("events", response.json())
 
 
 if __name__ == "__main__":

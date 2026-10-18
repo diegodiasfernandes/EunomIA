@@ -59,6 +59,7 @@ function App() {
     { role: "assistant", text: "Olá! Posso ajudar com seus compromissos e pendências. Quando quiser, varro seus e-mails no período que você escolher." },
   ]);
   const [draft, setDraft] = useState("");
+  const [conversationId, setConversationId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => {
     const requested = window.location.hash.slice(1);
     return TABS.some((tab) => tab.id === requested) ? requested : "chat";
@@ -144,22 +145,62 @@ function App() {
   }
 
   async function sendMessage(event) {
-    event.preventDefault();
-    const text = draft.trim();
-    if (!text || loading) return;
-    setDraft("");
-    setMessages((current) => [...current, { role: "user", text }]);
-    setLoading(true);
-    try {
-      const response = await api("/api/chat", { method: "POST", body: JSON.stringify({ message: text }) });
-      setMessages((current) => [...current, { role: "assistant", text: response.reply }]);
-      if (response.action) await refresh();
-    } catch (error) {
-      setMessages((current) => [...current, { role: "assistant", text: `Não consegui concluir: ${error.message}` }]);
-    } finally {
-      setLoading(false);
+  event.preventDefault();
+
+  const text = draft.trim();
+  if (!text || loading) return;
+
+  setDraft("");
+  setMessages((current) => [
+    ...current,
+    { role: "user", text },
+  ]);
+
+  setLoading(true);
+
+  try {
+    const result = await api("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        message: text,
+        conversation_id: conversationId,
+      }),
+    });
+
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: result.response,
+      },
+    ]);
+
+    if (
+      result.status === "confirmed" ||
+      result.status === "cancelled" ||
+      result.status === "other"
+    ) {
+      setConversationId(null);
+    } else {
+      setConversationId(result.conversation_id);
     }
+
+    if (result.status === "confirmed") {
+      await refresh();
+      setToast("Compromisso salvo na agenda local!");
+    }
+  } catch (error) {
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: `Não consegui concluir: ${error.message}`,
+      },
+    ]);
+  } finally {
+    setLoading(false);
   }
+}
 
   async function completeTask(task) {
     try {
