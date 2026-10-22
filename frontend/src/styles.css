@@ -83,6 +83,7 @@ a { color: inherit; text-decoration: none; }
 .chat-messages { display: flex; flex: 1; flex-direction: column; gap: 14px; max-height: 365px; min-height: 275px; overflow-y: auto; padding: 24px 22px; }
 .chat-message { align-items: flex-start; display: flex; gap: 9px; max-width: min(78%, 620px); }
 .chat-message.user { align-self: flex-end; }
+.chat-message-content { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .message-avatar { align-items: center; background: #eeeaff; border-radius: 50%; color: var(--purple); display: flex; flex: 0 0 auto; height: 25px; justify-content: center; margin-top: 2px; width: 25px; }
 .chat-message p { background: #f5f4f9; border-radius: 3px 12px 12px 12px; color: #5d5b70; font-size: 12px; line-height: 1.6; margin: 0; padding: 11px 14px; white-space: pre-line; }
 .chat-message.user p { background: var(--purple); border-radius: 12px 3px 12px 12px; color: #fff; }
@@ -152,6 +153,7 @@ a { color: inherit; text-decoration: none; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
 .button-primary { background: var(--purple); box-shadow: 0 3px 8px #7969d532; color: #fff; }
 .button-primary:hover { background: var(--purple-dark); }
+.event-confirm-button { align-self: flex-start; }
 .button-quiet { background: #fff; border-color: #e8e7ee; color: #777688; }
 .toast { align-items: center; animation: slidein .2s ease-out; background: #2f2c45; border-radius: 8px; bottom: 23px; box-shadow: 0 8px 25px #29244736; color: white; display: flex; font-size: 11px; gap: 8px; max-width: min(520px, calc(100vw - 30px)); padding: 12px 16px; position: fixed; right: 25px; z-index: 80; }
 .toast svg { color: #9cddbb; flex: 0 0 auto; }

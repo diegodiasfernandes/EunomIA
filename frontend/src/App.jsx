@@ -64,6 +64,7 @@ function App() {
     return TABS.some((tab) => tab.id === requested) ? requested : "chat";
   });
   const [loading, setLoading] = useState(false);
+  const [confirmingEventId, setConfirmingEventId] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [showScanDialog, setShowScanDialog] = useState(false);
   const [scanSince, setScanSince] = useState(() => {
@@ -152,12 +153,39 @@ function App() {
     setLoading(true);
     try {
       const response = await api("/api/chat", { method: "POST", body: JSON.stringify({ message: text }) });
-      setMessages((current) => [...current, { role: "assistant", text: response.reply }]);
-      if (response.action) await refresh();
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: response.reply,
+          eventDraft: response.action === "event_confirmation_required" ? response.event : null,
+        },
+      ]);
     } catch (error) {
       setMessages((current) => [...current, { role: "assistant", text: `Não consegui concluir: ${error.message}` }]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function confirmChatEvent(eventDraft) {
+    setConfirmingEventId(eventDraft.id);
+    try {
+      await api("/api/events", {
+        method: "POST",
+        body: JSON.stringify(eventDraft),
+      });
+      await refresh();
+      setMessages((current) => current.map((message) => (
+        message.eventDraft?.id === eventDraft.id
+          ? { ...message, eventDraft: null, text: "Reunião adicionada às Pendências." }
+          : message
+      )));
+      setToast("Reunião adicionada às Pendências.");
+    } catch (error) {
+      setPageError(error.message);
+    } finally {
+      setConfirmingEventId("");
     }
   }
 
@@ -181,9 +209,11 @@ function App() {
     }
   }
 
-  const detectedEvents = events.filter((event) => event.status === "detected");
+  const detectedEvents = events.filter((event) => event.status === "detected" && event.source === "email");
   const conflicts = events.filter((event) => event.conflict);
   const pendingTasks = dashboard?.tasks || [];
+  const pendingMeetings = events.filter((event) => event.status === "detected");
+  const pendingCount = pendingTasks.length + pendingMeetings.length;
   const googleConnected = dashboard?.google.connected;
   const today = localDateValue(new Date());
 
@@ -198,7 +228,7 @@ function App() {
         <div className="workspace-label">SEU ESPAÇO</div>
         <nav className="navigation" role="tablist" aria-label="Navegação principal">
           {TABS.map(({ id, label, icon: Icon }) => {
-            const count = id === "pendencias" ? pendingTasks.length : id === "conflitos" ? conflicts.length : 0;
+            const count = id === "pendencias" ? pendingCount : id === "conflitos" ? conflicts.length : 0;
             return (
               <button
                 key={id}
@@ -258,7 +288,19 @@ function App() {
                   {messages.map((message, index) => (
                     <div className={`chat-message ${message.role}`} key={`${index}-${message.role}`}>
                       {message.role === "assistant" && <span className="message-avatar"><Sparkles size={13} /></span>}
-                      <p>{message.text}</p>
+                      <div className="chat-message-content">
+                        <p>{message.text}</p>
+                        {message.eventDraft && (
+                          <button
+                            className="button button-primary event-confirm-button"
+                            onClick={() => confirmChatEvent(message.eventDraft)}
+                            disabled={confirmingEventId === message.eventDraft.id}
+                          >
+                            <Check size={15} />
+                            {confirmingEventId === message.eventDraft.id ? "Adicionando..." : "Confirmar Reunião"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {loading && <div className="typing-indicator"><span /><span /><span /></div>}
@@ -299,19 +341,26 @@ function App() {
           {activeTab === "pendencias" && (
             <section className="list-page">
               <div className="page-intro">
-                <span className="eyebrow">TAREFAS EXTRAÍDAS DOS E-MAILS</span>
+                <span className="eyebrow">TAREFAS E REUNIÕES PARA REVISAR</span>
                 <h1>Pendências</h1>
                 <p>O que ainda precisa ser resolvido.</p>
               </div>
               <section className="panel simple-panel">
-                <div className="section-heading"><div><h2>Em aberto</h2><p>{pendingTasks.length ? `${pendingTasks.length} ${pendingTasks.length === 1 ? "item" : "itens"}` : "Nenhum item pendente"}</p></div><span className="count-pill">{pendingTasks.length}</span></div>
-                {pendingTasks.length ? (
+                <div className="section-heading"><div><h2>Em aberto</h2><p>{pendingCount ? `${pendingCount} ${pendingCount === 1 ? "item" : "itens"}` : "Nenhum item pendente"}</p></div><span className="count-pill">{pendingCount}</span></div>
+                {pendingCount ? (
                   <div className="simple-list">
                     {pendingTasks.map((task) => (
                       <article className="task-item" key={task.id}>
                         <button className="task-check" onClick={() => completeTask(task)} aria-label={`Concluir ${task.title}`}><Check size={14} /></button>
                         <span className="list-copy"><b>{task.title}</b><small>{task.due_at ? `Prazo ${formatDate(task.due_at)}` : "Identificada em e-mail"}</small></span>
                         <span className="source-label"><Mail size={13} />E-mail</span>
+                      </article>
+                    ))}
+                    {pendingMeetings.map((meeting) => (
+                      <article className="task-item" key={meeting.id}>
+                        <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
+                        <span className="list-copy"><b>{meeting.title}</b><small>{formatDate(meeting.starts_at)}</small></span>
+                        <span className="source-label">Reunião</span>
                       </article>
                     ))}
                   </div>

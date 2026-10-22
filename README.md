@@ -1,6 +1,6 @@
 # EunomIA
 
-Protótipo de integração com Gmail e Google Calendar usando FastAPI, SQLite e Gemini. No estado atual, o backend expõe somente os endpoints da integração Google; as rotas de agenda e chatbot não fazem parte da API.
+Protótipo de assistente pessoal com FastAPI, SQLite e Gemini, incluindo chat, agenda local e integração opcional com Gmail e Google Calendar.
 
 ## Requisitos
 
@@ -17,7 +17,6 @@ Abra dois terminais na raiz do projeto.
 
 ```powershell
 cd backend
-Copy-Item .env.example .env
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
@@ -66,7 +65,9 @@ Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das thread
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.
 - `app.assistant` contém somente os dois adaptadores diretos para respostas do Gemini.
+- `POST /api/chat` classifica mensagens com `app.features.intent_detection.detect_intent`. Conversas comuns recebem uma resposta natural do Gemini; solicitações de evento com dados completos retornam uma prévia e só são salvas na tabela `events` após confirmação em `POST /api/events`. Solicitações incompletas pedem os detalhes faltantes.
+- `GET /api/events` e `GET /api/dashboard` alimentam a agenda e o painel da interface.
 
 ## Limites desta versão
 
-As rotas de agenda, tarefas, mocks e chatbot foram removidas do backend. A interface React ainda depende dessas rotas e precisará ser adaptada ou reconectada quando elas forem reintroduzidas. O protótipo usa um usuário local demonstrativo; login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações e voz ainda não fazem parte do MVP.
+Reuniões confirmadas pelo chat aparecem em Pendências e recebem duração padrão de uma hora; não são enviadas automaticamente ao Google Calendar. O protótipo ainda não inclui login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações ou voz.
