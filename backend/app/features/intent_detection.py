@@ -11,9 +11,16 @@ EVENT_SCHEMA = {
             "type": "STRING",
             "enum": ["create_event", "other"]
         },
+        "record_type": {
+            "type": "STRING",
+            "enum": ["meeting", "deadline"]
+        },
         "title": {"type": "STRING"},
+        "description": {"type": "STRING"},
         "date": {"type": "STRING"},
         "time": {"type": "STRING"},
+        "responsible": {"type": "STRING"},
+        "deadline_reference": {"type": "STRING"},
         "missing_fields": {
             "type": "ARRAY",
             "items": {"type": "STRING"}
@@ -21,9 +28,13 @@ EVENT_SCHEMA = {
     },
     "required": [
         "intent",
+        "record_type",
         "title",
+        "description",
         "date",
         "time",
+        "responsible",
+        "deadline_reference",
         "missing_fields"
     ]
 }
@@ -42,24 +53,30 @@ Você é o assistente de agenda EunomIA.
 
 Data e hora atuais: {now.isoformat()}.
 
-Identifique se o usuário deseja criar ou agendar um compromisso.
+Identifique se o usuário deseja registrar uma reunião ou um prazo de tarefa.
 
 Regras:
-1. Use intent = "create_event" quando a pessoa pedir para marcar,
-   agendar, criar ou combinar uma reunião, consulta ou outro compromisso,
-   mesmo que ainda não tenha informado data ou horário.
-2. Em pedidos de criação incompletos, mantenha intent = "create_event";
-   nunca classifique o pedido como "other" só porque faltam detalhes.
-3. Use intent = "other" apenas para conversa ou perguntas sem pedido
-   de criar um compromisso.
-4. Extraia o título, a data e o horário quando estiverem na mensagem.
-5. Converta datas relativas como "amanhã" usando a data e hora atuais.
-6. Não invente informações ausentes.
-7. Se faltar título, data ou horário, retorne o campo em missing_fields.
-8. Use datas no formato YYYY-MM-DD.
-9. Use horários no formato HH:MM.
+1. Use intent = "create_event" quando o usuário pedir para registrar
+   uma reunião, consulta, compromisso, tarefa ou prazo, mesmo que faltem dados.
+   Também trate como pedido de prazo declarações de obrigação como
+   "preciso entregar o relatório até sexta" ou "tenho que pagar a conta amanhã".
+2. Use record_type = "meeting" para encontros com horário de início e fim,
+   como reuniões e consultas. Exemplo: "marque uma reunião com Ana amanhã às 10".
+3. Use record_type = "deadline" para entregas, tarefas e obrigações com prazo,
+   como entregar um trabalho, pagar uma conta ou enviar um documento.
+   Exemplo: "crie um prazo para entregar o trabalho sexta". Uma tarefa com
+   data-limite não é uma reunião.
+4. Use intent = "other" apenas para conversa sem pedido de registrar algo;
+   nesse caso use record_type = "meeting". Perguntas sobre como executar uma
+   tarefa, sem pedido ou declaração de obrigação a registrar, são "other".
+5. Extraia título, descrição, data, horário, responsável e referência do prazo.
+6. Converta datas relativas usando a data e hora atuais.
+7. Não invente informações ausentes.
+8. Reuniões precisam de título, data e horário; retorne em missing_fields
+   qualquer um desses dados que faltar. Prazo pode não ter data ou horário.
+9. Use datas no formato YYYY-MM-DD e horários no formato HH:MM.
 10. Para campos desconhecidos, retorne "".
-11. Não execute nenhuma ação na agenda.
+11. Não execute nenhuma ação de gravação.
 
 Mensagem:
 {message}

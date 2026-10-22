@@ -21,6 +21,7 @@ from .google_integration import (
     integration_status,
     sync_google,
 )
+from .models import MeetingRecord, TaskDeadlineRecord
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -55,9 +56,19 @@ class ChatRequest(BaseModel):
 class EventConfirmationRequest(BaseModel):
     id: UUID
     title: str = Field(min_length=1)
+    description: str = ""
     starts_at: datetime
     ends_at: datetime
     location: str = ""
+
+
+class TaskConfirmationRequest(BaseModel):
+    id: UUID
+    title: str = Field(min_length=1)
+    description: str = ""
+    responsible: str | None = None
+    due_at: datetime | None = None
+    deadline_reference: str | None = None
 
 
 @app.on_event("startup")
@@ -70,7 +81,8 @@ def dashboard():
     with connect() as connection:
         tasks = connection.execute(
             """
-            SELECT id, title, due_at, status, source
+            SELECT id, title, description, responsible, due_at,
+                   deadline_reference, status, source
             FROM tasks
             WHERE user_id = 'demo' AND status = 'pending'
             ORDER BY due_at
@@ -112,43 +124,98 @@ def create_pending_event(request: EventConfirmationRequest):
             detail="O horário de término deve ser posterior ao início.",
         )
 
-    event = {
-        "id": str(request.id),
-        "title": request.title.strip(),
-        "starts_at": request.starts_at.isoformat(),
-        "ends_at": request.ends_at.isoformat(),
-        "location": request.location,
-        "status": "detected",
-        "source": "manual",
-    }
-    if not event["title"]:
+    title = request.title.strip()
+    if not title:
         raise HTTPException(status_code=422, detail="O título não pode ser vazio.")
 
+    meeting = MeetingRecord(
+        id=str(request.id),
+        title=title,
+        description=request.description.strip(),
+        starts_at=request.starts_at,
+        ends_at=request.ends_at,
+        duration_minutes=int(
+            (request.ends_at - request.starts_at).total_seconds() // 60
+        ),
+        status="detected",
+        source="manual",
+        location=request.location,
+    )
     with connect() as connection:
         existing = connection.execute(
             "SELECT id FROM events WHERE id = ? AND user_id = 'demo'",
-            (event["id"],),
+            (meeting.id,),
         ).fetchone()
         if existing is None:
             connection.execute(
                 """
                 INSERT INTO events(
-                    id, user_id, title, starts_at, ends_at, location,
+                    id, user_id, title, description, starts_at, ends_at, location,
                     status, source, updated_at
                 )
-                VALUES (?, 'demo', ?, ?, ?, ?, 'detected', 'manual', ?)
+                VALUES (?, 'demo', ?, ?, ?, ?, ?, 'detected', 'manual', ?)
                 """,
                 (
-                    event["id"],
-                    event["title"],
-                    event["starts_at"],
-                    event["ends_at"],
-                    event["location"],
+                    meeting.id,
+                    meeting.title,
+                    meeting.description,
+                    meeting.starts_at.isoformat(),
+                    meeting.ends_at.isoformat(),
+                    meeting.location or "",
                     datetime.now(ZoneInfo("America/Fortaleza")).isoformat(),
                 ),
             )
 
-    return {"event": event}
+    return {"meeting": meeting}
+
+
+@app.post("/api/tasks", status_code=201)
+def create_pending_task(request: TaskConfirmationRequest):
+    title = request.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="O título não pode ser vazio.")
+    if request.due_at is not None and request.due_at.utcoffset() is None:
+        raise HTTPException(
+            status_code=422,
+            detail="O prazo precisa ter data e horário com fuso definido.",
+        )
+
+    task = TaskDeadlineRecord(
+        id=str(request.id),
+        title=title,
+        description=request.description.strip(),
+        responsible=request.responsible,
+        due_at=request.due_at,
+        deadline_reference=request.deadline_reference,
+        status="pending",
+        source="manual",
+    )
+    with connect() as connection:
+        existing = connection.execute(
+            "SELECT id FROM tasks WHERE id = ? AND user_id = 'demo'",
+            (task.id,),
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO tasks(
+                    id, user_id, title, description, responsible, due_at,
+                    deadline_reference,
+                    status, source
+                )
+                VALUES (?, 'demo', ?, ?, ?, ?, ?, 'pending', 'manual')
+                """,
+                (
+                    task.id,
+                    task.title,
+                    task.description,
+                    task.responsible,
+                    task.due_at.isoformat() if task.due_at else None,
+                    task.deadline_reference,
+                ),
+            )
+
+    return {"task": task}
 
 
 @app.post("/api/chat")
@@ -171,6 +238,13 @@ def chat(request: ChatRequest):
             detail="O detector de intenção retornou um resultado inválido.",
         )
 
+    record_type = intent.get("record_type")
+    if record_type not in {"meeting", "deadline"}:
+        raise HTTPException(
+            status_code=502,
+            detail="O detector não identificou se o registro é reunião ou prazo.",
+        )
+
     if intent["intent"] == "other":
         try:
             reply = generate_natural_response(
@@ -183,11 +257,11 @@ def chat(request: ChatRequest):
             raise HTTPException(status_code=502, detail=str(error)) from error
         return {"reply": reply, "action": None}
 
-    event_fields = {
-        "title": "título",
-        "date": "data",
-        "time": "horário",
-    }
+    event_fields = {"title": "título"}
+    if record_type == "meeting":
+        event_fields.update({"date": "data", "time": "horário"})
+    elif intent.get("time") and not intent.get("date"):
+        event_fields["date"] = "data"
     missing_fields = [
         label
         for key, label in event_fields.items()
@@ -198,6 +272,49 @@ def chat(request: ChatRequest):
         return {
             "reply": f"Para criar o compromisso, preciso que você informe {labels}.",
             "action": None,
+        }
+
+    title = intent["title"].strip()
+    if record_type == "deadline":
+        due_at = None
+        if intent.get("date"):
+            deadline_time = intent.get("time") or "23:59"
+            try:
+                due_at = datetime.strptime(
+                    f"{intent['date']} {deadline_time}",
+                    "%Y-%m-%d %H:%M",
+                ).replace(tzinfo=ZoneInfo("America/Fortaleza"))
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=502,
+                    detail="O detector retornou um prazo com data ou horário inválido.",
+                ) from error
+
+        task = TaskDeadlineRecord(
+            id=str(uuid4()),
+            title=title,
+            description=(intent.get("description") or "").strip(),
+            responsible=(intent.get("responsible") or "").strip() or None,
+            due_at=due_at,
+            deadline_reference=(
+                (intent.get("deadline_reference") or "").strip() or None
+            ),
+            status="pending",
+            source="manual",
+        )
+        due_description = (
+            f", com prazo em {due_at.strftime('%d/%m/%Y às %H:%M')}"
+            if due_at
+            else ""
+        )
+        return {
+            "reply": (
+                f"Encontrei esta tarefa: “{task.title}”{due_description}. "
+                "Confirme para adicioná-la às pendências."
+            ),
+            "action": "record_confirmation_required",
+            "record_type": "deadline",
+            "record": task,
         }
 
     try:
@@ -212,24 +329,27 @@ def chat(request: ChatRequest):
         ) from error
 
     ends_at = starts_at + timedelta(hours=1)
-    event = {
-        "id": str(uuid4()),
-        "title": intent["title"].strip(),
-        "starts_at": starts_at.isoformat(),
-        "ends_at": ends_at.isoformat(),
-        "location": "",
-        "status": "detected",
-        "source": "manual",
-    }
+    meeting = MeetingRecord(
+        id=str(uuid4()),
+        title=title,
+        description=(intent.get("description") or "").strip(),
+        starts_at=starts_at,
+        ends_at=ends_at,
+        duration_minutes=60,
+        location="",
+        status="detected",
+        source="manual",
+    )
 
     return {
         "reply": (
-            f"Encontrei esta reunião: “{event['title']}”, "
+            f"Encontrei esta reunião: “{meeting.title}”, "
             f"{starts_at.strftime('%d/%m/%Y às %H:%M')}. "
             "Confirme para adicioná-la às pendências."
         ),
-        "action": "event_confirmation_required",
-        "event": event,
+        "action": "record_confirmation_required",
+        "record_type": "meeting",
+        "record": meeting,
     }
 
 

@@ -71,9 +71,12 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         message = "Como você pode me ajudar?"
         intent = {
             "intent": "other",
+            "record_type": "meeting",
             "title": "",
             "date": "",
             "time": "",
+            "responsible": "",
+            "deadline_reference": "",
             "missing_fields": [],
         }
         with (
@@ -99,9 +102,13 @@ class GoogleIntegrationApiTests(unittest.TestCase):
     def test_chat_returns_event_confirmation_without_persisting_it(self):
         intent = {
             "intent": "create_event",
+            "record_type": "meeting",
             "title": "Consulta médica",
+            "description": "Consulta de rotina",
             "date": "2030-05-14",
             "time": "10:30",
+            "responsible": "",
+            "deadline_reference": "",
             "missing_fields": [],
         }
         with patch(
@@ -116,16 +123,18 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertIn("14/05/2030 às 10h30", structured_response.call_args.args[0])
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["action"], "event_confirmation_required")
-        self.assertEqual(body["event"]["title"], "Consulta médica")
-        self.assertEqual(body["event"]["starts_at"], "2030-05-14T10:30:00-03:00")
-        self.assertEqual(body["event"]["ends_at"], "2030-05-14T11:30:00-03:00")
+        self.assertEqual(body["action"], "record_confirmation_required")
+        self.assertEqual(body["record_type"], "meeting")
+        self.assertEqual(body["record"]["title"], "Consulta médica")
+        self.assertEqual(body["record"]["description"], "Consulta de rotina")
+        self.assertEqual(body["record"]["starts_at"], "2030-05-14T10:30:00-03:00")
+        self.assertEqual(body["record"]["ends_at"], "2030-05-14T11:30:00-03:00")
         self.assertIn("Confirme", body["reply"])
 
         events_response = self.client.get("/api/events")
         self.assertEqual(events_response.status_code, 200)
         self.assertNotIn(
-            body["event"]["id"],
+            body["record"]["id"],
             [event["id"] for event in events_response.json()["events"]],
         )
 
@@ -133,6 +142,7 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         request_body = {
             "id": "1362d7e6-0b97-44e0-a419-2db508f0972c",
             "title": "Reunião de planejamento",
+            "description": "Planejar as próximas entregas",
             "starts_at": "2030-05-14T10:30:00-03:00",
             "ends_at": "2030-05-14T11:30:00-03:00",
             "location": "",
@@ -144,7 +154,11 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         duplicate_response = self.client.post("/api/events", json=request_body)
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["event"]["status"], "detected")
+        self.assertEqual(response.json()["meeting"]["status"], "detected")
+        self.assertEqual(
+            response.json()["meeting"]["duration_minutes"],
+            60,
+        )
         self.assertEqual(duplicate_response.status_code, 201)
         events_response = self.client.get("/api/events")
         added_events = [
@@ -154,6 +168,10 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         ]
         self.assertEqual(len(added_events), 1)
         self.assertEqual(added_events[0]["title"], request_body["title"])
+        self.assertEqual(
+            added_events[0]["description"],
+            request_body["description"],
+        )
 
     def test_confirmation_requires_timezone_and_positive_duration(self):
         request_body = {
@@ -169,9 +187,12 @@ class GoogleIntegrationApiTests(unittest.TestCase):
     def test_chat_requests_missing_event_details_instead_of_creating(self):
         intent = {
             "intent": "create_event",
+            "record_type": "meeting",
             "title": "Consulta médica",
             "date": "",
             "time": "",
+            "responsible": "",
+            "deadline_reference": "",
             "missing_fields": ["date", "time"],
         }
         with patch(
@@ -186,6 +207,55 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["action"], None)
         self.assertIn("data, horário", response.json()["reply"])
+
+    def test_chat_classifies_and_confirms_a_deadline_as_a_task(self):
+        intent = {
+            "intent": "create_event",
+            "record_type": "deadline",
+            "title": "Entregar relatório",
+            "description": "Finalizar e enviar o relatório mensal",
+            "date": "2030-05-14",
+            "time": "",
+            "responsible": "Diego",
+            "deadline_reference": "até o fim do dia",
+            "missing_fields": [],
+        }
+        with patch(
+            "app.features.intent_detection.generate_structured_response",
+            return_value=intent,
+        ) as structured_response:
+            response = self.client.post(
+                "/api/chat",
+                json={"message": "Tenho que entregar o relatório até 14/05"},
+            )
+
+        self.assertIn("prazo de tarefa", structured_response.call_args.args[0])
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["record_type"], "deadline")
+        self.assertEqual(body["record"]["title"], "Entregar relatório")
+        self.assertEqual(
+            body["record"]["description"],
+            "Finalizar e enviar o relatório mensal",
+        )
+        self.assertEqual(body["record"]["due_at"], "2030-05-14T23:59:00-03:00")
+
+        confirmation = self.client.post("/api/tasks", json=body["record"])
+        self.assertEqual(confirmation.status_code, 201)
+        self.assertEqual(confirmation.json()["task"]["status"], "pending")
+
+        dashboard = self.client.get("/api/dashboard")
+        created_task = next(
+            task for task in dashboard.json()["tasks"]
+            if task["id"] == body["record"]["id"]
+        )
+        self.assertEqual(created_task["title"], "Entregar relatório")
+        self.assertEqual(
+            created_task["description"],
+            "Finalizar e enviar o relatório mensal",
+        )
+        self.assertEqual(created_task["responsible"], "Diego")
+        self.assertEqual(created_task["deadline_reference"], "até o fim do dia")
 
     def test_chat_rejects_blank_messages(self):
         response = self.client.post("/api/chat", json={"message": "   "})

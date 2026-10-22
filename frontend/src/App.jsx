@@ -52,6 +52,15 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatDuration(minutes) {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "Não informada";
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (!hours) return `${remainingMinutes} min`;
+  if (!remainingMinutes) return `${hours} h`;
+  return `${hours} h ${remainingMinutes} min`;
+}
+
 function App() {
   const [dashboard, setDashboard] = useState(null);
   const [events, setEvents] = useState([]);
@@ -76,6 +85,7 @@ function App() {
   const [pageError, setPageError] = useState("");
   const [toast, setToast] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [selectedPending, setSelectedPending] = useState(null);
 
   const refresh = useCallback(async () => {
     const [nextDashboard, nextEvents] = await Promise.all([
@@ -158,7 +168,9 @@ function App() {
         {
           role: "assistant",
           text: response.reply,
-          eventDraft: response.action === "event_confirmation_required" ? response.event : null,
+          pendingDraft: response.action === "record_confirmation_required"
+            ? { type: response.record_type, record: response.record }
+            : null,
         },
       ]);
     } catch (error) {
@@ -168,20 +180,25 @@ function App() {
     }
   }
 
-  async function confirmChatEvent(eventDraft) {
-    setConfirmingEventId(eventDraft.id);
+  async function confirmChatRecord(draftRecord) {
+    const { type, record } = draftRecord;
+    setConfirmingEventId(record.id);
     try {
-      await api("/api/events", {
+      await api(type === "meeting" ? "/api/events" : "/api/tasks", {
         method: "POST",
-        body: JSON.stringify(eventDraft),
+        body: JSON.stringify(record),
       });
       await refresh();
       setMessages((current) => current.map((message) => (
-        message.eventDraft?.id === eventDraft.id
-          ? { ...message, eventDraft: null, text: "Reunião adicionada às Pendências." }
+        message.pendingDraft?.record.id === record.id
+          ? {
+              ...message,
+              pendingDraft: null,
+              text: `${type === "meeting" ? "Reunião" : "Tarefa"} adicionada às Pendências.`,
+            }
           : message
       )));
-      setToast("Reunião adicionada às Pendências.");
+      setToast(`${type === "meeting" ? "Reunião" : "Tarefa"} adicionada às Pendências.`);
     } catch (error) {
       setPageError(error.message);
     } finally {
@@ -290,14 +307,16 @@ function App() {
                       {message.role === "assistant" && <span className="message-avatar"><Sparkles size={13} /></span>}
                       <div className="chat-message-content">
                         <p>{message.text}</p>
-                        {message.eventDraft && (
+                        {message.pendingDraft && (
                           <button
                             className="button button-primary event-confirm-button"
-                            onClick={() => confirmChatEvent(message.eventDraft)}
-                            disabled={confirmingEventId === message.eventDraft.id}
+                            onClick={() => confirmChatRecord(message.pendingDraft)}
+                            disabled={confirmingEventId === message.pendingDraft.record.id}
                           >
                             <Check size={15} />
-                            {confirmingEventId === message.eventDraft.id ? "Adicionando..." : "Confirmar Reunião"}
+                            {confirmingEventId === message.pendingDraft.record.id
+                              ? "Adicionando..."
+                              : `Confirmar ${message.pendingDraft.type === "meeting" ? "Reunião" : "Prazo"}`}
                           </button>
                         )}
                       </div>
@@ -352,15 +371,25 @@ function App() {
                     {pendingTasks.map((task) => (
                       <article className="task-item" key={task.id}>
                         <button className="task-check" onClick={() => completeTask(task)} aria-label={`Concluir ${task.title}`}><Check size={14} /></button>
-                        <span className="list-copy"><b>{task.title}</b><small>{task.due_at ? `Prazo ${formatDate(task.due_at)}` : "Identificada em e-mail"}</small></span>
-                        <span className="source-label"><Mail size={13} />E-mail</span>
+                        <button
+                          className="pending-item-detail"
+                          onClick={() => setSelectedPending({ type: "deadline", record: task })}
+                        >
+                          <span className="list-copy"><b>{task.title}</b><small>{task.due_at ? `Prazo ${formatDate(task.due_at)}` : task.deadline_reference || (task.source === "email" ? "Identificada em e-mail" : "Sem prazo definido")}{task.responsible ? ` · Responsável: ${task.responsible}` : ""}</small></span>
+                          <span className="source-label">{task.source === "email" ? <><Mail size={13} />E-mail</> : "Tarefa"}</span>
+                        </button>
                       </article>
                     ))}
                     {pendingMeetings.map((meeting) => (
                       <article className="task-item" key={meeting.id}>
-                        <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
-                        <span className="list-copy"><b>{meeting.title}</b><small>{formatDate(meeting.starts_at)}</small></span>
-                        <span className="source-label">Reunião</span>
+                        <button
+                          className="pending-item-detail"
+                          onClick={() => setSelectedPending({ type: "meeting", record: meeting })}
+                        >
+                          <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
+                          <span className="list-copy"><b>{meeting.title}</b><small>{formatDate(meeting.starts_at)}</small></span>
+                          <span className="source-label">Reunião</span>
+                        </button>
                       </article>
                     ))}
                   </div>
@@ -417,6 +446,72 @@ function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {selectedPending && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => event.target === event.currentTarget && setSelectedPending(null)}
+        >
+          <section
+            className="scan-modal pending-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pending-details-title"
+          >
+            <div className="modal-heading">
+              <span className="assistant-icon">
+                {selectedPending.type === "meeting" ? <CalendarDays size={18} /> : <CheckCheck size={18} />}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setSelectedPending(null)}
+                aria-label="Fechar detalhes"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <span className="eyebrow">{selectedPending.type === "meeting" ? "DETALHES DA REUNIÃO" : "DETALHES DO PRAZO"}</span>
+            <h2 id="pending-details-title">{selectedPending.record.title}</h2>
+            <p className="pending-description">
+              {selectedPending.record.description || "Nenhuma descrição informada."}
+            </p>
+            <dl className="pending-details-list">
+              {selectedPending.type === "meeting" ? (
+                <>
+                  <div><dt>Hora de início</dt><dd>{formatDate(selectedPending.record.starts_at)}</dd></div>
+                  <div>
+                    <dt>Duração</dt>
+                    <dd>
+                      {formatDuration(
+                        selectedPending.record.duration_minutes
+                        ?? (selectedPending.record.ends_at
+                          ? Math.round(
+                              (new Date(selectedPending.record.ends_at).getTime()
+                                - new Date(selectedPending.record.starts_at).getTime()) / 60000,
+                            )
+                          : null),
+                      )}
+                    </dd>
+                  </div>
+                  {selectedPending.record.location && (
+                    <div><dt>Local</dt><dd>{selectedPending.record.location}</dd></div>
+                  )}
+                  {selectedPending.record.link && (
+                    <div><dt>Link</dt><dd><a href={selectedPending.record.link} target="_blank" rel="noreferrer">{selectedPending.record.link}</a></dd></div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div><dt>Prazo</dt><dd>{selectedPending.record.due_at ? formatDate(selectedPending.record.due_at) : selectedPending.record.deadline_reference || "Não informado"}</dd></div>
+                  <div><dt>Responsável</dt><dd>{selectedPending.record.responsible || "Não informado"}</dd></div>
+                  <div><dt>Duração</dt><dd>Não se aplica a prazos</dd></div>
+                  <div><dt>Hora de início</dt><dd>Não se aplica a prazos</dd></div>
+                </>
+              )}
+            </dl>
+          </section>
         </div>
       )}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}

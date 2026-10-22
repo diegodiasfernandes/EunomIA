@@ -65,9 +65,10 @@ Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das thread
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.
 - `app.assistant` contém somente os dois adaptadores diretos para respostas do Gemini.
-- `POST /api/chat` classifica mensagens com `app.features.intent_detection.detect_intent`. Conversas comuns recebem uma resposta natural do Gemini; solicitações de evento com dados completos retornam uma prévia e só são salvas na tabela `events` após confirmação em `POST /api/events`. Solicitações incompletas pedem os detalhes faltantes.
+- `POST /api/chat` classifica mensagens com `app.features.intent_detection.detect_intent`. Conversas comuns recebem uma resposta natural do Gemini; reuniões retornam uma prévia como `MeetingRecord` e são salvas em `events` após confirmação em `POST /api/events`. Tarefas com prazo retornam uma prévia como `TaskDeadlineRecord` e são salvas em `tasks` após confirmação em `POST /api/tasks`. Solicitações incompletas pedem os dados necessários.
 - `GET /api/events` e `GET /api/dashboard` alimentam a agenda e o painel da interface.
+- Em Pendências, clicar em uma reunião ou prazo abre seus detalhes: título e descrição; reuniões também mostram início e duração, e tarefas mostram prazo e responsável quando informados.
 
 ## Limites desta versão
 
-Reuniões confirmadas pelo chat aparecem em Pendências e recebem duração padrão de uma hora; não são enviadas automaticamente ao Google Calendar. O protótipo ainda não inclui login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações ou voz.
+Reuniões confirmadas pelo chat aparecem em Pendências e recebem duração padrão de uma hora. Tarefas confirmadas aparecem como prazos em Pendências, com responsável e referência de prazo quando informados. Nenhum dos registros é enviado automaticamente ao Google Calendar. O protótipo ainda não inclui login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações ou voz.

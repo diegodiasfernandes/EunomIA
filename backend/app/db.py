@@ -71,7 +71,10 @@ def initialize_database():
                 event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
                 source_ref TEXT,
                 title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                responsible TEXT,
                 due_at TEXT,
+                deadline_reference TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 source TEXT NOT NULL DEFAULT 'manual',
                 UNIQUE(user_id, source_ref)
@@ -130,6 +133,21 @@ def initialize_database():
         if "source_ref" not in task_columns:
             connection.execute(
                 "ALTER TABLE tasks ADD COLUMN source_ref TEXT"
+            )
+
+        if "responsible" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN responsible TEXT"
+            )
+
+        if "description" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+            )
+
+        if "deadline_reference" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN deadline_reference TEXT"
             )
 
         connection.execute(

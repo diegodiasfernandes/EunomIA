@@ -13,6 +13,7 @@ class MeetingConflict(BaseModel):
 class MeetingRecord(BaseModel):
     id: str
     title: str
+    description: str = ""
     starts_at: datetime
     ends_at: datetime | None = None
     duration_minutes: int | None = None
@@ -28,6 +29,7 @@ class MeetingRecord(BaseModel):
 class TaskDeadlineRecord(BaseModel):
     id: str
     title: str
+    description: str = ""
     responsible: str | None = None
     due_at: datetime | None = None
     deadline_reference: str | None = None

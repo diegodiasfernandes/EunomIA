@@ -120,6 +120,9 @@ a { color: inherit; text-decoration: none; }
 .list-copy { display: flex; flex: 1; flex-direction: column; gap: 5px; min-width: 0; }
 .list-copy b { color: #555367; font-size: 11px; font-weight: 600; }
 .list-copy small { color: #9998a7; font-size: 10px; line-height: 1.4; }
+.pending-item-detail { align-items: center; background: transparent; border: 0; cursor: pointer; display: flex; flex: 1; gap: 12px; min-width: 0; padding: 0; text-align: left; }
+.pending-item-detail:focus-visible { border-radius: 5px; }
+.pending-item-detail:hover .list-copy b { color: var(--purple-dark); }
 .button-soft { background: #efedff; color: #685bc3; font-size: 10px; padding: 8px 10px; white-space: nowrap; }
 .button-soft:hover { background: #e5e1ff; }
 .list-page .page-intro { margin-bottom: 26px; }
@@ -141,6 +144,13 @@ a { color: inherit; text-decoration: none; }
 
 .modal-backdrop { align-items: center; background: #25233a55; display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: 50; }
 .scan-modal { background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 22px 80px #29244729; display: flex; flex-direction: column; max-width: 460px; padding: 24px; width: 100%; }
+.pending-details-modal { max-height: min(90vh, 720px); overflow-y: auto; }
+.pending-details-modal .pending-description { color: #858495; font-size: 12px; line-height: 1.6; margin: 0 0 16px; white-space: pre-line; }
+.pending-details-list { border-top: 1px solid var(--line); margin: 0; }
+.pending-details-list > div { border-bottom: 1px solid var(--line); display: grid; gap: 16px; grid-template-columns: minmax(110px, 1fr) 2fr; padding: 12px 0; }
+.pending-details-list dt { color: #858495; font-size: 11px; }
+.pending-details-list dd { color: #4d4b60; font-size: 11px; margin: 0; overflow-wrap: anywhere; }
+.pending-details-list a { color: var(--purple-dark); text-decoration: underline; }
 .modal-heading { align-items: center; display: flex; justify-content: space-between; margin-bottom: 17px; }
 .scan-modal > .eyebrow { margin-bottom: 7px; }
 .scan-modal h2 { color: #302e43; font: 700 19px/1.3 "Manrope", sans-serif; margin: 0 0 8px; }
