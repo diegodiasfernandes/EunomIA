@@ -9,6 +9,7 @@ import {
   Mail,
   Menu,
   MessageCircle,
+  Pencil,
   RefreshCw,
   Send,
   Sparkles,
@@ -85,7 +86,7 @@ function App() {
   });
   const [loading, setLoading] = useState(false);
   const [confirmingEventId, setConfirmingEventId] = useState("");
-  const [reviewingEventId, setReviewingEventId] = useState("");
+  const [updatingEventId, setUpdatingEventId] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [showScanDialog, setShowScanDialog] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -162,7 +163,17 @@ function App() {
       });
       await refresh();
       setShowScanDialog(false);
-      setToast(`Varredura concluída: ${result.result.emails} e-mails e ${result.result.email_threads_with_events} possíveis compromissos.`);
+      selectTab("pendencias");
+      const {
+        emails,
+        email_threads_with_events: foundItems,
+        pending_items: pendingItems,
+      } = result.result;
+      setToast(pendingItems
+        ? `Varredura concluída: ${pendingItems} ${pendingItems === 1 ? "item em aberto" : "itens em aberto"} em Pendências.`
+        : foundItems
+          ? `${foundItems} ${foundItems === 1 ? "item foi encontrado" : "itens foram encontrados"}, mas nenhum está em aberto. Eles já podem estar confirmados ou cancelados.`
+          : `Varredura concluída: ${emails} e-mails analisados; nenhum item foi identificado.`);
     } catch (error) {
       setScanError(error.message);
     } finally {
@@ -222,35 +233,7 @@ function App() {
     }
   }
 
-  async function completeTask(task) {
-    try {
-      await api(`/api/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: "done" }) });
-      await refresh();
-      setToast("Pendência concluída.");
-    } catch (error) {
-      setPageError(error.message);
-    }
-  }
-
-  async function reviewDetected(item, status) {
-    setReviewingEventId(item.record.id);
-    try {
-      await api(`${item.type === "meeting" ? "/api/events" : "/api/tasks"}/${item.record.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      });
-      await refresh();
-      setToast(status === "pending"
-        ? `${item.type === "meeting" ? "Reunião" : "Prazo"} aceito e adicionado às Pendências.`
-        : `${item.type === "meeting" ? "Reunião" : "Prazo"} recusado e removido da revisão.`);
-    } catch (error) {
-      setPageError(error.message);
-    } finally {
-      setReviewingEventId("");
-    }
-  }
-
-  function editDetected(item) {
+  function editPendingItem(item) {
     const record = item.record;
     const isMeeting = item.type === "meeting";
     const durationMinutes = isMeeting
@@ -314,7 +297,7 @@ function App() {
       setSelectedPending(null);
       setEditingDetected(false);
       setEditDraft(null);
-      setToast("Alterações salvas. O item continua aguardando sua revisão.");
+      setToast("Alterações salvas.");
     } catch (error) {
       setPageError(error.message);
     } finally {
@@ -322,18 +305,42 @@ function App() {
     }
   }
 
-  const detectedEvents = events.filter((event) => event.status === "detected" && event.source === "email");
+  async function updateMeetingStatus(meeting, status) {
+    setUpdatingEventId(meeting.id);
+    try {
+      await api(`/api/events/${meeting.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      await refresh();
+      setToast(status === "confirmed" ? "Compromisso confirmado." : "Compromisso cancelado.");
+    } catch (error) {
+      setPageError(error.message);
+    } finally {
+      setUpdatingEventId("");
+    }
+  }
+
+  async function updateDeadlineStatus(task, status) {
+    setUpdatingEventId(task.id);
+    try {
+      await api(`/api/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      await refresh();
+      setToast(status === "confirmed" ? "Lembrete confirmado." : "Lembrete cancelado.");
+    } catch (error) {
+      setPageError(error.message);
+    } finally {
+      setUpdatingEventId("");
+    }
+  }
+
   const conflicts = events.filter((event) => event.conflict);
   const tasks = dashboard?.tasks || [];
-  const detectedTasks = tasks.filter((task) => task.status === "detected" && task.source === "email");
-  const pendingTasks = tasks.filter((task) => task.status === "pending");
-  const detectedItems = [
-    ...detectedEvents.map((record) => ({ type: "meeting", record })),
-    ...detectedTasks.map((record) => ({ type: "deadline", record })),
-  ];
-  const pendingMeetings = events.filter((event) => (
-    event.status === "pending" || (event.status === "detected" && event.source !== "email")
-  ));
+  const pendingTasks = tasks.filter((task) => task.status === "pending" || task.status === "detected");
+  const pendingMeetings = events.filter((event) => event.status === "pending" || event.status === "detected");
   const pendingCount = pendingTasks.length + pendingMeetings.length;
   const googleConnected = dashboard?.google.connected;
   const today = localDateValue(new Date());
@@ -441,71 +448,6 @@ function App() {
                 </div>
               </section>
 
-              <section className="panel detected-panel">
-                <div className="section-heading">
-                  <div><h2>Compromissos encontrados</h2><p>Aceite para adicionar às Pendências ou recuse para descartar.</p></div>
-                  <span className="count-pill">{detectedItems.length}</span>
-                </div>
-                {detectedItems.length ? (
-                  <div className="simple-list">
-                    {detectedItems.map((item) => {
-                      const { record, type } = item;
-                      const isMeeting = type === "meeting";
-                      const dateSummary = isMeeting
-                        ? formatDate(record.starts_at)
-                        : record.due_at
-                          ? `Prazo ${formatDate(record.due_at)}`
-                          : record.deadline_reference || "Prazo não informado";
-                      return (
-                      <article className="detected-item" key={`${type}-${record.id}`}>
-                        <button
-                          className="pending-item-detail"
-                          onClick={() => setSelectedPending(item)}
-                        >
-                          <span className={`list-icon ${isMeeting ? "detected-icon" : "task-icon"}`}>
-                            {isMeeting ? <CalendarDays size={17} /> : <CheckCheck size={17} />}
-                          </span>
-                          <span className="list-copy">
-                            <b>{record.title}</b>
-                            <small>{dateSummary}{isMeeting && record.location ? ` · ${record.location}` : ""}</small>
-                            {record.inferred_fields?.length > 0 && (
-                              <small className="implicit-info" title={record.inferred_fields.join(" ")}>
-                                Informação completada automaticamente: {record.inferred_fields.join(" ")}
-                              </small>
-                            )}
-                          </span>
-                          <span className="source-label">{isMeeting ? "Reunião" : "Prazo"} · E-mail</span>
-                        </button>
-                        <div className="detected-actions">
-                          <button
-                            className="button button-quiet"
-                            onClick={() => editDetected(item)}
-                            aria-label={`Editar ${record.title}`}
-                          >
-                            Editar
-                          </button>
-                          <button
-                            className="button button-soft"
-                            onClick={() => reviewDetected(item, "pending")}
-                            disabled={reviewingEventId === record.id}
-                          >
-                            <Check size={15} />Adicionar
-                          </button>
-                          <button
-                            className="icon-button"
-                            onClick={() => reviewDetected(item, "rejected")}
-                            disabled={reviewingEventId === record.id}
-                            aria-label={`Recusar ${record.title}`}
-                            title="Recusar compromisso"
-                          >
-                            <X size={16} />
-                          </button>
-                        </div>
-                      </article>
-                    )})}
-                  </div>
-                ) : <EmptyState text={dashboard ? "Nenhum compromisso aguardando revisão." : "Carregando compromissos..."} />}
-              </section>
             </section>
           )}
 
@@ -522,14 +464,39 @@ function App() {
                   <div className="simple-list">
                     {pendingTasks.map((task) => (
                       <article className="task-item" key={task.id}>
-                        <button className="task-check" onClick={() => completeTask(task)} aria-label={`Concluir ${task.title}`}><Check size={14} /></button>
                         <button
                           className="pending-item-detail"
                           onClick={() => setSelectedPending({ type: "deadline", record: task })}
                         >
+                          <span className="list-icon task-icon"><CheckCheck size={17} /></span>
                           <span className="list-copy"><b>{task.title}</b><small>{task.due_at ? `Prazo ${formatDate(task.due_at)}` : task.deadline_reference || (task.source === "email" ? "Identificada em e-mail" : "Sem prazo definido")}{task.responsible ? ` · Responsável: ${task.responsible}` : ""}</small></span>
                           <span className="source-label">{task.source === "email" ? <><Mail size={13} />E-mail</> : "Tarefa"}</span>
                         </button>
+                        <div className="pending-event-actions">
+                          <button
+                            className="button button-quiet"
+                            onClick={() => editPendingItem({ type: "deadline", record: task })}
+                            aria-label={`Editar ${task.title}`}
+                          >
+                            <Pencil size={13} />Editar
+                          </button>
+                          <button
+                            className="button button-primary"
+                            onClick={() => updateDeadlineStatus(task, "confirmed")}
+                            disabled={updatingEventId === task.id}
+                            aria-label={`Confirmar ${task.title}`}
+                          >
+                            <Check size={13} />Confirmar
+                          </button>
+                          <button
+                            className="button button-quiet"
+                            onClick={() => updateDeadlineStatus(task, "cancelled")}
+                            disabled={updatingEventId === task.id}
+                            aria-label={`Cancelar ${task.title}`}
+                          >
+                            <X size={13} />Cancelar
+                          </button>
+                        </div>
                       </article>
                     ))}
                     {pendingMeetings.map((meeting) => (
@@ -542,6 +509,31 @@ function App() {
                           <span className="list-copy"><b>{meeting.title}</b><small>{formatDate(meeting.starts_at)}</small></span>
                           <span className="source-label">Reunião</span>
                         </button>
+                        <div className="pending-event-actions">
+                          <button
+                            className="button button-quiet"
+                            onClick={() => editPendingItem({ type: "meeting", record: meeting })}
+                            aria-label={`Editar ${meeting.title}`}
+                          >
+                            <Pencil size={13} />Editar
+                          </button>
+                          <button
+                            className="button button-primary"
+                            onClick={() => updateMeetingStatus(meeting, "confirmed")}
+                            disabled={updatingEventId === meeting.id}
+                            aria-label={`Confirmar ${meeting.title}`}
+                          >
+                            <Check size={13} />Confirmar
+                          </button>
+                          <button
+                            className="button button-quiet"
+                            onClick={() => updateMeetingStatus(meeting, "cancelled")}
+                            disabled={updatingEventId === meeting.id}
+                            aria-label={`Cancelar ${meeting.title}`}
+                          >
+                            <X size={13} />Cancelar
+                          </button>
+                        </div>
                       </article>
                     ))}
                   </div>

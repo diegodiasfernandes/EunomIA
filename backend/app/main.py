@@ -66,7 +66,7 @@ class EventConfirmationRequest(BaseModel):
 
 
 class EventReviewRequest(BaseModel):
-    status: Literal["pending", "rejected"] | None = None
+    status: Literal["pending", "rejected", "confirmed", "cancelled"] | None = None
     title: str | None = None
     description: str | None = None
     starts_at: datetime | None = None
@@ -75,7 +75,7 @@ class EventReviewRequest(BaseModel):
 
 
 class TaskReviewRequest(BaseModel):
-    status: Literal["pending", "rejected", "done"] | None = None
+    status: Literal["pending", "rejected", "done", "confirmed", "cancelled"] | None = None
     title: str | None = None
     description: str | None = None
     responsible: str | None = None
@@ -164,7 +164,7 @@ def events():
 
 
 @app.patch("/api/events/{event_id}")
-def review_email_event(event_id: UUID, request: EventReviewRequest):
+def review_event(event_id: UUID, request: EventReviewRequest):
     editable_fields = {
         "title",
         "description",
@@ -185,17 +185,17 @@ def review_email_event(event_id: UUID, request: EventReviewRequest):
                 )
             current = connection.execute(
                 """
-                SELECT title, description, starts_at, ends_at, location, sender
+                SELECT title, description, starts_at, ends_at, location, sender, status
                 FROM events
                 WHERE id = ? AND user_id = 'demo'
-                  AND source = 'email' AND status = 'detected'
+                  AND status IN ('detected', 'pending')
                 """,
                 (str(event_id),),
             ).fetchone()
             if current is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Só é possível editar compromissos encontrados que ainda aguardam revisão.",
+                    detail="Só é possível editar compromissos que ainda estão em aberto ou aguardam revisão.",
                 )
 
             values = {
@@ -246,7 +246,7 @@ def review_email_event(event_id: UUID, request: EventReviewRequest):
                     str(event_id),
                 ),
             )
-            return {"id": str(event_id), "status": "detected"}
+            return {"id": str(event_id), "status": current["status"]}
 
         if request.status is None:
             raise HTTPException(status_code=422, detail="Informe o novo status.")
@@ -255,12 +255,20 @@ def review_email_event(event_id: UUID, request: EventReviewRequest):
             UPDATE events
             SET status = ?, updated_at = ?
             WHERE id = ? AND user_id = 'demo'
-              AND source = 'email' AND status = 'detected'
+              AND (
+                  (source = 'email' AND status = 'detected'
+                   AND ? IN ('pending', 'rejected'))
+                  OR
+                  (status IN ('pending', 'detected')
+                   AND ? IN ('confirmed', 'cancelled'))
+              )
             """,
             (
                 request.status,
                 datetime.now(ZoneInfo("America/Fortaleza")).isoformat(),
                 str(event_id),
+                request.status,
+                request.status,
             ),
         )
         if result.rowcount == 0:
@@ -272,7 +280,7 @@ def review_email_event(event_id: UUID, request: EventReviewRequest):
                 raise HTTPException(status_code=404, detail="Compromisso não encontrado.")
             raise HTTPException(
                 status_code=409,
-                detail="Este compromisso já foi revisado ou não veio de um e-mail.",
+                detail="Este compromisso não pode ser alterado neste estado.",
             )
 
     return {"id": str(event_id), "status": request.status}
@@ -301,17 +309,20 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
             current = connection.execute(
                 """
                 SELECT title, description, responsible, due_at, deadline_reference,
-                       sender
+                       sender, status
                 FROM tasks
                 WHERE id = ? AND user_id = 'demo'
-                  AND source = 'email' AND status = 'detected'
+                  AND (
+                      (source = 'email' AND status = 'detected')
+                      OR status = 'pending'
+                  )
                 """,
                 (str(task_id),),
             ).fetchone()
             if current is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Só é possível editar prazos encontrados que ainda aguardam revisão.",
+                    detail="Só é possível editar prazos que ainda estão em aberto ou aguardam revisão.",
                 )
             values = dict(current)
             for field in editable_fields & supplied_fields:
@@ -351,26 +362,31 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
                     str(task_id),
                 ),
             )
-            return {"id": str(task_id), "status": "detected"}
+            return {"id": str(task_id), "status": current["status"]}
 
         if request.status is None:
             raise HTTPException(status_code=422, detail="Informe o novo status.")
-    allowed_status = "detected" if request.status in {"pending", "rejected"} else "pending"
     with connect() as connection:
         result = connection.execute(
             """
             UPDATE tasks
             SET status = ?
-            WHERE id = ? AND user_id = 'demo' AND status = ?
+            WHERE id = ? AND user_id = 'demo'
               AND (
-                  (source = 'email' AND ? IN ('pending', 'rejected'))
-                  OR (? = 'done' AND source IN ('email', 'manual'))
+                  (source = 'email' AND status = 'detected'
+                   AND ? IN ('pending', 'rejected'))
+                  OR
+                  (status = 'pending' AND source IN ('email', 'manual')
+                   AND ? = 'done')
+                  OR
+                  (status IN ('pending', 'detected')
+                   AND ? IN ('confirmed', 'cancelled'))
               )
             """,
             (
                 request.status,
                 str(task_id),
-                allowed_status,
+                request.status,
                 request.status,
                 request.status,
             ),

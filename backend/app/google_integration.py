@@ -513,6 +513,7 @@ def sync_google(
         ).append(email_records[-1])
 
     detected_count = 0
+    pending_count = 0
 
     with connect() as connection:
         for record in email_records:
@@ -574,6 +575,38 @@ def sync_google(
             if record_type == "other":
                 continue
 
+            if extracted.get("cancelled"):
+                connection.execute(
+                    """
+                    DELETE FROM tasks
+                    WHERE user_id = ? AND source = 'email'
+                      AND (
+                          source_ref = ?
+                          OR source_ref = ?
+                          OR event_id IN (
+                              SELECT id FROM events
+                              WHERE user_id = ? AND source = 'email'
+                                AND source_ref = ?
+                          )
+                      )
+                    """,
+                    (
+                        USER_ID,
+                        thread_id,
+                        f"email-deadline:{thread_id}",
+                        USER_ID,
+                        thread_id,
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM events
+                    WHERE user_id = ? AND source = 'email' AND source_ref = ?
+                    """,
+                    (USER_ID, thread_id),
+                )
+                continue
+
             if record_type == "deadline":
                 (
                     title,
@@ -582,7 +615,6 @@ def sync_google(
                     inferred_fields,
                 ) = _deadline_schedule(extracted, ordered[-1]["subject"])
                 task_source_ref = f"email-deadline:{thread_id}"
-                task_status = "cancelled" if extracted.get("cancelled") else "detected"
                 connection.execute(
                     """
                     INSERT INTO tasks(
@@ -598,11 +630,7 @@ def sync_google(
                         responsible = excluded.responsible,
                         due_at = excluded.due_at,
                         deadline_reference = excluded.deadline_reference,
-                        status = CASE
-                            WHEN excluded.status = 'cancelled' THEN 'cancelled'
-                            WHEN tasks.status = 'pending' THEN 'pending'
-                            ELSE excluded.status
-                        END,
+                        status = excluded.status,
                         inferred_fields = excluded.inferred_fields
                     """,
                     (
@@ -618,11 +646,21 @@ def sync_google(
                         str(extracted.get("responsible") or "").strip() or None,
                         due_at,
                         deadline_reference,
-                        task_status,
+                        "pending",
                         json.dumps(inferred_fields, ensure_ascii=False),
                     ),
                 )
                 detected_count += 1
+                task = connection.execute(
+                    """
+                    SELECT status
+                    FROM tasks
+                    WHERE user_id = ? AND source_ref = ?
+                    """,
+                    (USER_ID, task_source_ref),
+                ).fetchone()
+                if task and task["status"] == "pending":
+                    pending_count += 1
                 continue
 
             (
@@ -637,12 +675,6 @@ def sync_google(
             )
 
             start_dt = datetime.fromisoformat(starts_at)
-
-            status = (
-                "cancelled"
-                if extracted.get("cancelled")
-                else "detected"
-            )
 
             connection.execute(
                 """
@@ -670,11 +702,7 @@ def sync_google(
                     ends_at = excluded.ends_at,
                     location = excluded.location,
                     sender = excluded.sender,
-                    status = CASE
-                        WHEN excluded.status = 'cancelled' THEN 'cancelled'
-                        WHEN events.status = 'pending' THEN 'pending'
-                        ELSE excluded.status
-                    END,
+                    status = excluded.status,
                     preparation = excluded.preparation,
                     inferred_fields = excluded.inferred_fields,
                     updated_at = excluded.updated_at
@@ -695,7 +723,7 @@ def sync_google(
                     ).isoformat(),
                     extracted.get("location", ""),
                     _sender_for_messages(ordered),
-                    status,
+                    "pending",
                     extracted.get("preparation", ""),
                     json.dumps(inferred_fields, ensure_ascii=False),
                     now.isoformat(),
@@ -704,7 +732,7 @@ def sync_google(
 
             event = connection.execute(
                 """
-                SELECT id
+                SELECT id, status
                 FROM events
                 WHERE user_id = ?
                 AND source_ref = ?
@@ -716,6 +744,8 @@ def sync_google(
             ).fetchone()
 
             if event:
+                if event["status"] == "pending":
+                    pending_count += 1
                 for message in ordered:
                     email = connection.execute(
                         """
@@ -793,4 +823,5 @@ def sync_google(
     return {
         "emails": len(email_records),
         "email_threads_with_events": detected_count,
+        "pending_items": pending_count,
     }

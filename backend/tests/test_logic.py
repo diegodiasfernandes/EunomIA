@@ -93,17 +93,23 @@ class AssistantTests(unittest.TestCase):
 
         self.assertEqual(result["emails"], 0)
         self.assertEqual(result["email_threads_with_events"], 0)
+        self.assertEqual(result["pending_items"], 0)
         self.assertEqual(build.call_count, 1)
         self.assertEqual(build.call_args.args[:2], ("gmail", "v1"))
         gmail.users.return_value.messages.return_value.list.assert_called_once()
 
-    def test_rescan_reopens_rejected_meetings_but_keeps_accepted_ones(self):
+    def test_rescan_reopens_existing_meetings_in_pending(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "rescan.sqlite"
             gmail = MagicMock()
             messages = gmail.users.return_value.messages.return_value
             messages.list.return_value.execute.return_value = {
-                "messages": [{"id": "message-rejected"}, {"id": "message-pending"}]
+                "messages": [
+                    {"id": "message-rejected"},
+                    {"id": "message-pending"},
+                    {"id": "message-new"},
+                    {"id": "message-confirmed"},
+                ]
             }
             received_at = datetime.now(timezone.utc)
             messages.get.return_value.execute.side_effect = [
@@ -124,6 +130,22 @@ class AssistantTests(unittest.TestCase):
                     "internalDate": str(int(received_at.timestamp() * 1000)),
                     "payload": {
                         "headers": [{"name": "Subject", "value": "Reunião aceita"}]
+                    },
+                },
+                {
+                    "id": "message-new",
+                    "threadId": "thread-new",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {
+                        "headers": [{"name": "Subject", "value": "Reunião nova"}]
+                    },
+                },
+                {
+                    "id": "message-confirmed",
+                    "threadId": "thread-confirmed",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {
+                        "headers": [{"name": "Subject", "value": "Reunião confirmada"}]
                     },
                 },
             ]
@@ -151,6 +173,7 @@ class AssistantTests(unittest.TestCase):
                     for status, thread_id in (
                         ("rejected", "thread-rejected"),
                         ("pending", "thread-pending"),
+                        ("confirmed", "thread-confirmed"),
                     ):
                         connection.execute(
                             """
@@ -182,6 +205,8 @@ class AssistantTests(unittest.TestCase):
                         side_effect=[
                             extracted_without_schedule,
                             extracted_event,
+                            extracted_event,
+                            extracted_event,
                         ],
                     ),
                 ):
@@ -199,15 +224,19 @@ class AssistantTests(unittest.TestCase):
                                    description, sender
                             FROM events
                             WHERE source_ref IN (
-                                'thread-rejected', 'thread-pending'
+                                'thread-rejected', 'thread-pending',
+                                'thread-new', 'thread-confirmed'
                             )
                             """
                         )
                     }
 
-            self.assertEqual(result["email_threads_with_events"], 2)
-            self.assertEqual(events["thread-rejected"]["status"], "detected")
+            self.assertEqual(result["email_threads_with_events"], 4)
+            self.assertEqual(result["pending_items"], 4)
+            self.assertEqual(events["thread-rejected"]["status"], "pending")
             self.assertEqual(events["thread-pending"]["status"], "pending")
+            self.assertEqual(events["thread-new"]["status"], "pending")
+            self.assertEqual(events["thread-confirmed"]["status"], "pending")
             self.assertEqual(
                 events["thread-rejected"]["sender"],
                 "Ana Silva <ana@example.com>",
@@ -225,6 +254,113 @@ class AssistantTests(unittest.TestCase):
             )
             self.assertTrue(any("Data não informada" in item for item in inferred_fields))
             self.assertTrue(any("Horário não informado" in item for item in inferred_fields))
+
+    def test_cancelled_email_records_are_removed_instead_of_persisted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "cancelled.sqlite"
+            gmail = MagicMock()
+            messages = gmail.users.return_value.messages.return_value
+            messages.list.return_value.execute.return_value = {
+                "messages": [
+                    {"id": "cancelled-meeting-message"},
+                    {"id": "cancelled-deadline-message"},
+                ]
+            }
+            received_at = datetime.now(timezone.utc)
+            messages.get.return_value.execute.side_effect = [
+                {
+                    "id": "cancelled-meeting-message",
+                    "threadId": "cancelled-meeting-thread",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {"headers": [{"name": "Subject", "value": "Reunião cancelada"}]},
+                },
+                {
+                    "id": "cancelled-deadline-message",
+                    "threadId": "cancelled-deadline-thread",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {"headers": [{"name": "Subject", "value": "Prazo cancelado"}]},
+                },
+            ]
+            cancelled_meeting = {
+                "is_event": True,
+                "record_type": "meeting",
+                "title": "Reunião",
+                "date": "2030-06-01",
+                "time": "10:00",
+                "duration_minutes": 60,
+                "location": "",
+                "description": "",
+                "preparation": "",
+                "cancelled": True,
+            }
+            cancelled_deadline = {
+                **cancelled_meeting,
+                "record_type": "deadline",
+                "responsible": "",
+                "deadline_reference": "",
+            }
+
+            with patch("app.db.database_path", return_value=database):
+                initialize_database()
+                with connect() as connection:
+                    connection.execute(
+                        """
+                        INSERT INTO events(
+                            id, user_id, source_ref, title, starts_at, ends_at,
+                            status, source, updated_at
+                        )
+                        VALUES (
+                            'old-meeting', 'demo', 'cancelled-meeting-thread',
+                            'Reunião antiga', '2030-06-01T10:00:00-03:00',
+                            '2030-06-01T11:00:00-03:00', 'pending', 'email', ?
+                        )
+                        """,
+                        (received_at.isoformat(),),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO tasks(
+                            id, user_id, source_ref, title, status, source
+                        )
+                        VALUES (
+                            'old-deadline', 'demo',
+                            'email-deadline:cancelled-deadline-thread',
+                            'Prazo antigo', 'pending', 'email'
+                        )
+                        """
+                    )
+
+                with (
+                    patch("app.google_integration.google_credentials", return_value=object()),
+                    patch("app.google_integration.build", return_value=gmail),
+                    patch(
+                        "app.google_integration.generate_structured_response",
+                        side_effect=[cancelled_meeting, cancelled_deadline],
+                    ),
+                ):
+                    result = sync_google(date.today() - timedelta(days=1), date.today())
+
+                with connect() as connection:
+                    event_count = connection.execute(
+                        """
+                        SELECT COUNT(*) FROM events
+                        WHERE source_ref = 'cancelled-meeting-thread'
+                        """
+                    ).fetchone()[0]
+                    task_count = connection.execute(
+                        """
+                        SELECT COUNT(*) FROM tasks
+                        WHERE source_ref IN (
+                            'cancelled-meeting-thread',
+                            'email-deadline:cancelled-deadline-thread'
+                        )
+                        """
+                    ).fetchone()[0]
+
+            self.assertEqual(result["email_threads_with_events"], 0)
+            self.assertEqual(result["pending_items"], 0)
+            self.assertEqual(event_count, 0)
+            self.assertEqual(task_count, 0)
 
     def test_email_deadline_is_saved_as_task_without_meeting_duration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -288,8 +424,9 @@ class AssistantTests(unittest.TestCase):
                     ).fetchone()[0]
 
             self.assertEqual(result["email_threads_with_events"], 1)
+            self.assertEqual(result["pending_items"], 1)
             self.assertIsNotNone(task)
-            self.assertEqual(task["status"], "detected")
+            self.assertEqual(task["status"], "pending")
             self.assertEqual(task["source"], "email")
             self.assertEqual(task["due_at"], None)
             self.assertEqual(task["responsible"], "Ana")

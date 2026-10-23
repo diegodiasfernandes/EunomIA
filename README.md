@@ -61,8 +61,8 @@ Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das thread
 ## Organização da lógica
 
 - `app.main` registra os endpoints de chat, agenda local, tarefas, OAuth e sincronização do Gmail.
-- `app.google_integration` lê mensagens do Gmail, registra os remetentes e classifica cada thread como reunião, prazo ou irrelevante antes de criar sugestões locais. Reuniões recebem valores padrão para dados essenciais ausentes; prazos são salvos como tarefas sem duração, com prazo mantido vazio se não houver data ou referência. Inferências ficam visíveis para revisão na lista de compromissos.
-- A lista “Compromissos encontrados” reúne reuniões e prazos detectados; cada item pode ser aberto para ver detalhes, editado antes da revisão, aceito para entrar em Pendências ou recusado. Os remetentes dos e-mails aparecem nos detalhes e na descrição dos registros.
+- `app.google_integration` lê mensagens do Gmail, registra os remetentes e classifica cada thread como reunião, prazo ou irrelevante. Reuniões recebem valores padrão para dados essenciais ausentes; prazos são salvos como tarefas sem duração, com prazo mantido vazio se não houver data ou referência. Reuniões e prazos ativos entram diretamente em Pendências, sem uma etapa separada de revisão; uma nova varredura reabre o item existente como pendente, enquanto cancelamentos removem os registros correspondentes.
+- Em Pendências, reuniões e prazos podem ser abertos para ver detalhes, editados, confirmados ou cancelados. A confirmação atualiza o estado local; reuniões serão eventos e prazos serão lembretes quando a integração com Google Calendar for implementada. Os remetentes dos e-mails aparecem nos detalhes e na descrição dos registros.
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.
 - `app.assistant` contém somente os dois adaptadores diretos para respostas do Gemini.
@@ -72,4 +72,4 @@ Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das thread
 
 ## Limites desta versão
 
-Reuniões confirmadas pelo chat aparecem em Pendências e recebem duração padrão de uma hora. Tarefas confirmadas aparecem como prazos em Pendências, com responsável e referência de prazo quando informados. Nenhum dos registros é enviado automaticamente ao Google Calendar. O protótipo ainda não inclui login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações ou voz.
+Reuniões confirmadas pelo chat aparecem em Pendências e recebem duração padrão de uma hora. Tarefas confirmadas aparecem como prazos em Pendências, com responsável e referência de prazo quando informados. A varredura do Gmail também adiciona reuniões e prazos diretamente a Pendências. Confirmar reuniões ou prazos em Pendências ainda não grava eventos ou lembretes no Google Calendar. O protótipo ainda não inclui login próprio, isolamento multiusuário, remoção/desconexão de credenciais, atualização incremental em segundo plano, notificações ou voz.

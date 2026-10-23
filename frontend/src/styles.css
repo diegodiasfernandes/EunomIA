@@ -107,17 +107,14 @@ a { color: inherit; text-decoration: none; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.detected-panel { margin-top: 18px; padding: 0 19px; }
-.detected-actions { align-items: center; display: flex; gap: 5px; }
-.implicit-info { color: #a16b35 !important; display: block; line-height: 1.45; }
 .implicit-details { color: #a16b35 !important; }
 .section-heading { align-items: center; display: flex; justify-content: space-between; padding: 17px 0 14px; }
 .section-heading h2 { color: #302e43; font: 700 14px/1.3 "Manrope", sans-serif; margin: 0 0 4px; }
 .section-heading p { color: #9998a8; font-size: 10px; margin: 0; }
 .count-pill { align-items: center; background: #f0edff; border-radius: 20px; color: #7062c9; display: inline-flex; font-size: 10px; height: 23px; justify-content: center; min-width: 23px; padding: 0 7px; }
 .simple-list { border-top: 1px solid #f0eff4; }
-.detected-item, .task-item, .conflict-item { align-items: center; border-bottom: 1px solid #f2f1f5; display: flex; gap: 12px; min-height: 68px; padding: 11px 0; }
-.detected-item:last-child, .task-item:last-child, .conflict-item:last-child { border-bottom: 0; }
+.task-item, .conflict-item { align-items: center; border-bottom: 1px solid #f2f1f5; display: flex; gap: 12px; min-height: 68px; padding: 11px 0; }
+.task-item:last-child, .conflict-item:last-child { border-bottom: 0; }
 .list-icon { align-items: center; border-radius: 8px; display: flex; flex: 0 0 auto; height: 34px; justify-content: center; width: 34px; }
 .detected-icon { background: #edf3ff; color: #6795cb; }
 .task-icon { background: #f2f0ff; color: #8272ca; }
@@ -127,8 +124,8 @@ a { color: inherit; text-decoration: none; }
 .pending-item-detail { align-items: center; background: transparent; border: 0; cursor: pointer; display: flex; flex: 1; gap: 12px; min-width: 0; padding: 0; text-align: left; }
 .pending-item-detail:focus-visible { border-radius: 5px; }
 .pending-item-detail:hover .list-copy b { color: var(--purple-dark); }
-.button-soft { background: #efedff; color: #685bc3; font-size: 10px; padding: 8px 10px; white-space: nowrap; }
-.button-soft:hover { background: #e5e1ff; }
+.pending-event-actions { display: flex; flex: 0 0 auto; gap: 5px; }
+.pending-event-actions .button { font-size: 9px; gap: 4px; padding: 7px 8px; white-space: nowrap; }
 .list-page .page-intro { margin-bottom: 26px; }
 .simple-panel { padding: 0 20px; }
 .task-item { min-height: 70px; }
@@ -206,14 +203,14 @@ a { color: inherit; text-decoration: none; }
   .chat-footer { align-items: flex-end; gap: 10px; padding: 12px; }
   .chat-footer > span { font-size: 0; }
   .scan-button { font-size: 10px; padding: 8px 9px; }
-  .detected-panel { padding: 0 12px; }
   .section-heading { padding: 14px 0 12px; }
   .section-heading h2 { font-size: 12px; }
   .section-heading p { font-size: 9px; }
-  .detected-item, .task-item, .conflict-item { gap: 9px; }
+  .task-item, .conflict-item { gap: 9px; }
+  .pending-event-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .pending-event-actions .button { font-size: 8px; gap: 3px; padding: 6px; }
   .list-copy b { font-size: 10px; }
   .list-copy small { font-size: 9px; }
-  .button-soft { font-size: 9px; padding: 7px 8px; }
   .simple-panel { padding: 0 13px; }
   .source-label { font-size: 0; }
   .date-fields { grid-template-columns: 1fr; }

@@ -233,6 +233,56 @@ class GoogleIntegrationApiTests(unittest.TestCase):
             [event["id"] for event in events if event["status"] == "pending"],
         )
 
+    def test_pending_meeting_can_be_edited_confirmed_or_cancelled(self):
+        event_ids = {
+            "confirmed": "b1f94185-d280-43a8-9b26-62c48c7f4001",
+            "cancelled": "b1f94185-d280-43a8-9b26-62c48c7f4002",
+        }
+        from app.db import connect
+
+        with connect() as connection:
+            for action, event_id in event_ids.items():
+                connection.execute(
+                    """
+                    INSERT INTO events(
+                        id, user_id, title, starts_at, ends_at, status, source,
+                        updated_at
+                    )
+                    VALUES (?, 'demo', ?, ?, ?, 'pending', 'manual', ?)
+                    """,
+                    (
+                        event_id,
+                        f"Reunião {action}",
+                        "2030-06-01T10:00:00-03:00",
+                        "2030-06-01T11:00:00-03:00",
+                        "2030-05-01T00:00:00-03:00",
+                    ),
+                )
+
+        edited = self.client.patch(
+            f"/api/events/{event_ids['confirmed']}",
+            json={
+                "title": "Reunião atualizada",
+                "starts_at": "2030-06-02T14:00:00-03:00",
+                "ends_at": "2030-06-02T15:00:00-03:00",
+            },
+        )
+        confirmed = self.client.patch(
+            f"/api/events/{event_ids['confirmed']}",
+            json={"status": "confirmed"},
+        )
+        cancelled = self.client.patch(
+            f"/api/events/{event_ids['cancelled']}",
+            json={"status": "cancelled"},
+        )
+
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(edited.json()["status"], "pending")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["status"], "confirmed")
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["status"], "cancelled")
+
     def test_reviewing_email_deadline_accepts_to_pending_or_rejects(self):
         task_ids = {
             "accepted": "32e8bc65-588a-443e-97fc-43c1c637ef10",
@@ -282,6 +332,53 @@ class GoogleIntegrationApiTests(unittest.TestCase):
             [task["id"] for task in dashboard["tasks"] if task["status"] == "pending"],
         )
         self.assertEqual(rejected_status, "rejected")
+
+    def test_pending_deadline_can_be_edited_confirmed_or_cancelled(self):
+        task_ids = {
+            "confirmed": "8a32d822-a244-4f28-bcc7-1244c45c4001",
+            "cancelled": "8a32d822-a244-4f28-bcc7-1244c45c4002",
+        }
+        from app.db import connect
+
+        with connect() as connection:
+            for action, task_id in task_ids.items():
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        id, user_id, title, due_at, status, source
+                    )
+                    VALUES (?, 'demo', ?, ?, 'pending', 'manual')
+                    """,
+                    (
+                        task_id,
+                        f"Prazo {action}",
+                        "2030-06-01T10:00:00-03:00",
+                    ),
+                )
+
+        edited = self.client.patch(
+            f"/api/tasks/{task_ids['confirmed']}",
+            json={
+                "title": "Prazo atualizado",
+                "description": "Lembrete atualizado",
+                "due_at": "2030-06-02T14:00:00-03:00",
+            },
+        )
+        confirmed = self.client.patch(
+            f"/api/tasks/{task_ids['confirmed']}",
+            json={"status": "confirmed"},
+        )
+        cancelled = self.client.patch(
+            f"/api/tasks/{task_ids['cancelled']}",
+            json={"status": "cancelled"},
+        )
+
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(edited.json()["status"], "pending")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["status"], "confirmed")
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["status"], "cancelled")
 
     def test_editing_detected_email_meeting_keeps_sender_and_review_status(self):
         event_id = "591f4375-7fbc-4b53-a31f-ab728bb9410a"
