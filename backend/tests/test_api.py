@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -231,6 +232,152 @@ class GoogleIntegrationApiTests(unittest.TestCase):
             event_ids["accepted"],
             [event["id"] for event in events if event["status"] == "pending"],
         )
+
+    def test_reviewing_email_deadline_accepts_to_pending_or_rejects(self):
+        task_ids = {
+            "accepted": "32e8bc65-588a-443e-97fc-43c1c637ef10",
+            "rejected": "60d3e352-1141-4ce7-8d51-8be2e0884b27",
+        }
+        from app.db import connect
+
+        with connect() as connection:
+            for action, task_id in task_ids.items():
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        id, user_id, source_ref, title, status, source
+                    )
+                    VALUES (?, 'demo', ?, ?, 'detected', 'email')
+                    """,
+                    (task_id, f"email-deadline:{action}", f"Prazo {action}"),
+                )
+
+        accepted = self.client.patch(
+            f"/api/tasks/{task_ids['accepted']}",
+            json={"status": "pending"},
+        )
+        dashboard = self.client.get("/api/dashboard").json()
+        completed = self.client.patch(
+            f"/api/tasks/{task_ids['accepted']}",
+            json={"status": "done"},
+        )
+        rejected = self.client.patch(
+            f"/api/tasks/{task_ids['rejected']}",
+            json={"status": "rejected"},
+        )
+        from app.db import connect
+
+        with connect() as connection:
+            rejected_status = connection.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (task_ids["rejected"],),
+            ).fetchone()["status"]
+
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(completed.json()["status"], "done")
+        self.assertIn(
+            task_ids["accepted"],
+            [task["id"] for task in dashboard["tasks"] if task["status"] == "pending"],
+        )
+        self.assertEqual(rejected_status, "rejected")
+
+    def test_editing_detected_email_meeting_keeps_sender_and_review_status(self):
+        event_id = "591f4375-7fbc-4b53-a31f-ab728bb9410a"
+        from app.db import connect
+
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO events(
+                    id, user_id, source_ref, title, description, starts_at,
+                    ends_at, sender, status, source, updated_at
+                )
+                VALUES (?, 'demo', ?, ?, ?, ?, ?, ?, 'detected', 'email', ?)
+                """,
+                (
+                    event_id,
+                    "edit-meeting-thread",
+                    "Reunião antiga",
+                    "Remetente(s): Ana <ana@example.com>\n\nDescrição antiga",
+                    "2030-06-01T10:00:00-03:00",
+                    "2030-06-01T11:00:00-03:00",
+                    "Ana <ana@example.com>",
+                    "2030-05-01T00:00:00-03:00",
+                ),
+            )
+
+        with patch(
+            "app.main.ZoneInfo",
+            return_value=timezone(timedelta(hours=-3)),
+        ):
+            response = self.client.patch(
+                f"/api/events/{event_id}",
+                json={
+                    "title": "Reunião atualizada",
+                    "description": "Descrição editada",
+                    "starts_at": "2030-06-02T14:00:00-03:00",
+                    "ends_at": "2030-06-02T15:30:00-03:00",
+                    "location": "Sala 2",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "detected")
+        event = next(
+            event for event in self.client.get("/api/events").json()["events"]
+            if event["id"] == event_id
+        )
+        self.assertEqual(event["title"], "Reunião atualizada")
+        self.assertIn("Remetente(s): Ana <ana@example.com>", event["description"])
+        self.assertEqual(event["location"], "Sala 2")
+        self.assertEqual(event["status"], "detected")
+
+    def test_editing_detected_email_deadline_keeps_it_in_review(self):
+        task_id = "7b95e521-fad1-4aaf-9f3e-17f3985eec4b"
+        from app.db import connect
+
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO tasks(
+                    id, user_id, source_ref, title, description, sender,
+                    status, source
+                )
+                VALUES (?, 'demo', ?, ?, ?, ?, 'detected', 'email')
+                """,
+                (
+                    task_id,
+                    "email-deadline:edit-task",
+                    "Prazo antigo",
+                    "Remetente(s): Bruno <bruno@example.com>",
+                    "Bruno <bruno@example.com>",
+                ),
+            )
+
+        response = self.client.patch(
+            f"/api/tasks/{task_id}",
+            json={
+                "title": "Entregar relatório final",
+                "description": "Revisar os números antes de enviar",
+                "due_at": None,
+                "deadline_reference": "até sexta",
+                "responsible": "Diego",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "detected")
+        task = next(
+            task for task in self.client.get("/api/dashboard").json()["tasks"]
+            if task["id"] == task_id
+        )
+        self.assertEqual(task["title"], "Entregar relatório final")
+        self.assertEqual(task["due_at"], None)
+        self.assertEqual(task["deadline_reference"], "até sexta")
+        self.assertEqual(task["responsible"], "Diego")
+        self.assertIn("Remetente(s): Bruno <bruno@example.com>", task["description"])
 
     def test_confirmation_requires_timezone_and_positive_duration(self):
         request_body = {

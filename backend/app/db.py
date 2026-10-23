@@ -57,6 +57,7 @@ def initialize_database():
                 starts_at TEXT NOT NULL,
                 ends_at TEXT NOT NULL,
                 location TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'confirmed',
                 source TEXT NOT NULL DEFAULT 'manual',
                 preparation TEXT NOT NULL DEFAULT '',
@@ -72,9 +73,11 @@ def initialize_database():
                 source_ref TEXT,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '',
                 responsible TEXT,
                 due_at TEXT,
                 deadline_reference TEXT,
+                inferred_fields TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL DEFAULT 'pending',
                 source TEXT NOT NULL DEFAULT 'manual',
                 UNIQUE(user_id, source_ref)
@@ -148,6 +151,27 @@ def initialize_database():
         if "deadline_reference" not in task_columns:
             connection.execute(
                 "ALTER TABLE tasks ADD COLUMN deadline_reference TEXT"
+            )
+        if "inferred_fields" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN inferred_fields TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "sender" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
+            )
+
+        event_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(events)").fetchall()
+        }
+        if "inferred_fields" not in event_columns:
+            connection.execute(
+                "ALTER TABLE events ADD COLUMN inferred_fields TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "sender" not in event_columns:
+            connection.execute(
+                "ALTER TABLE events ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
             )
 
         connection.execute(

@@ -20,8 +20,10 @@ class MeetingRecord(BaseModel):
     status: str
     source: str
     location: str | None = None
+    sender: str = ""
     link: str | None = None
     participants: list[str] = Field(default_factory=list)
+    inferred_fields: list[str] = Field(default_factory=list)
     conflict: bool = False
     conflicts_with: list[MeetingConflict] = Field(default_factory=list)
 
@@ -36,3 +38,5 @@ class TaskDeadlineRecord(BaseModel):
     status: str
     source: str
     event_id: str | None = None
+    inferred_fields: list[str] = Field(default_factory=list)
+    sender: str = ""

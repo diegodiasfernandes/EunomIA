@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -65,7 +66,21 @@ class EventConfirmationRequest(BaseModel):
 
 
 class EventReviewRequest(BaseModel):
-    status: Literal["pending", "rejected"]
+    status: Literal["pending", "rejected"] | None = None
+    title: str | None = None
+    description: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    location: str | None = None
+
+
+class TaskReviewRequest(BaseModel):
+    status: Literal["pending", "rejected", "done"] | None = None
+    title: str | None = None
+    description: str | None = None
+    responsible: str | None = None
+    due_at: datetime | None = None
+    deadline_reference: str | None = None
 
 
 class TaskConfirmationRequest(BaseModel):
@@ -75,6 +90,16 @@ class TaskConfirmationRequest(BaseModel):
     responsible: str | None = None
     due_at: datetime | None = None
     deadline_reference: str | None = None
+
+
+def _description_with_sender(description: str, sender: str) -> str:
+    description = description.strip()
+    if not sender:
+        return description
+    sender_line = f"Remetente(s): {sender}"
+    if sender_line in description:
+        return description
+    return f"{sender_line}\n\n{description}" if description else sender_line
 
 
 @app.on_event("startup")
@@ -88,15 +113,21 @@ def dashboard():
         tasks = connection.execute(
             """
             SELECT id, title, description, responsible, due_at,
-                   deadline_reference, status, source
+                   deadline_reference, inferred_fields, sender, status, source
             FROM tasks
-            WHERE user_id = 'demo' AND status = 'pending'
+            WHERE user_id = 'demo' AND status IN ('pending', 'detected')
             ORDER BY due_at
             """
         ).fetchall()
 
     return {
-        "tasks": [dict(task) for task in tasks],
+        "tasks": [
+            {
+                **dict(task),
+                "inferred_fields": json.loads(task["inferred_fields"] or "[]"),
+            }
+            for task in tasks
+        ],
         "google": integration_status(),
     }
 
@@ -107,7 +138,7 @@ def events():
         rows = connection.execute(
             """
             SELECT id, title, description, starts_at, ends_at, location,
-                   status, source
+                   sender, status, source, inferred_fields
             FROM events
             WHERE user_id = 'demo'
             ORDER BY starts_at
@@ -122,8 +153,10 @@ def events():
             starts_at=row["starts_at"],
             ends_at=row["ends_at"],
             location=row["location"] or None,
+            sender=row["sender"] or "",
             status=row["status"],
             source=row["source"],
+            inferred_fields=json.loads(row["inferred_fields"] or "[]"),
         )
         for row in rows
     ]
@@ -132,7 +165,91 @@ def events():
 
 @app.patch("/api/events/{event_id}")
 def review_email_event(event_id: UUID, request: EventReviewRequest):
+    editable_fields = {
+        "title",
+        "description",
+        "starts_at",
+        "ends_at",
+        "location",
+    }
+    supplied_fields = request.model_fields_set
+    if not supplied_fields:
+        raise HTTPException(status_code=422, detail="Informe as alterações do compromisso.")
+
     with connect() as connection:
+        if supplied_fields & editable_fields:
+            if request.status is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Edite ou revise o compromisso em ações separadas.",
+                )
+            current = connection.execute(
+                """
+                SELECT title, description, starts_at, ends_at, location, sender
+                FROM events
+                WHERE id = ? AND user_id = 'demo'
+                  AND source = 'email' AND status = 'detected'
+                """,
+                (str(event_id),),
+            ).fetchone()
+            if current is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Só é possível editar compromissos encontrados que ainda aguardam revisão.",
+                )
+
+            values = {
+                "title": current["title"],
+                "description": current["description"],
+                "starts_at": datetime.fromisoformat(current["starts_at"]),
+                "ends_at": datetime.fromisoformat(current["ends_at"]),
+                "location": current["location"],
+            }
+            for field in editable_fields & supplied_fields:
+                value = getattr(request, field)
+                if field == "title":
+                    value = value.strip()
+                    if not value:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="O título não pode ser vazio.",
+                        )
+                if field in {"description", "location"} and value is None:
+                    value = ""
+                if field in {"starts_at", "ends_at"}:
+                    if value is None or value.utcoffset() is None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="Data e horário precisam incluir fuso horário.",
+                        )
+                values[field] = value
+
+            if values["ends_at"] <= values["starts_at"]:
+                raise HTTPException(
+                    status_code=422,
+                    detail="O término deve ser posterior ao início.",
+                )
+            connection.execute(
+                """
+                UPDATE events
+                SET title = ?, description = ?, starts_at = ?, ends_at = ?,
+                    location = ?, inferred_fields = '[]', updated_at = ?
+                WHERE id = ? AND user_id = 'demo'
+                """,
+                (
+                    values["title"],
+                    _description_with_sender(values["description"], current["sender"]),
+                    values["starts_at"].isoformat(),
+                    values["ends_at"].isoformat(),
+                    values["location"],
+                    datetime.now(ZoneInfo("America/Fortaleza")).isoformat(),
+                    str(event_id),
+                ),
+            )
+            return {"id": str(event_id), "status": "detected"}
+
+        if request.status is None:
+            raise HTTPException(status_code=422, detail="Informe o novo status.")
         result = connection.execute(
             """
             UPDATE events
@@ -159,6 +276,118 @@ def review_email_event(event_id: UUID, request: EventReviewRequest):
             )
 
     return {"id": str(event_id), "status": request.status}
+
+
+@app.patch("/api/tasks/{task_id}")
+def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
+    editable_fields = {
+        "title",
+        "description",
+        "responsible",
+        "due_at",
+        "deadline_reference",
+    }
+    supplied_fields = request.model_fields_set
+    if not supplied_fields:
+        raise HTTPException(status_code=422, detail="Informe as alterações do prazo.")
+
+    with connect() as connection:
+        if supplied_fields & editable_fields:
+            if request.status is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Edite ou revise o prazo em ações separadas.",
+                )
+            current = connection.execute(
+                """
+                SELECT title, description, responsible, due_at, deadline_reference,
+                       sender
+                FROM tasks
+                WHERE id = ? AND user_id = 'demo'
+                  AND source = 'email' AND status = 'detected'
+                """,
+                (str(task_id),),
+            ).fetchone()
+            if current is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Só é possível editar prazos encontrados que ainda aguardam revisão.",
+                )
+            values = dict(current)
+            for field in editable_fields & supplied_fields:
+                value = getattr(request, field)
+                if field == "title":
+                    value = value.strip()
+                    if not value:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="O título não pode ser vazio.",
+                        )
+                if field == "description" and value is None:
+                    value = ""
+                if field == "due_at" and value is not None and value.utcoffset() is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="O prazo precisa incluir fuso horário.",
+                    )
+                if field in {"responsible", "deadline_reference"} and value is not None:
+                    value = value.strip() or None
+                values[field] = value
+            connection.execute(
+                """
+                UPDATE tasks
+                SET title = ?, description = ?, responsible = ?, due_at = ?,
+                    deadline_reference = ?, inferred_fields = '[]'
+                WHERE id = ? AND user_id = 'demo'
+                """,
+                (
+                    values["title"],
+                    _description_with_sender(values["description"], current["sender"]),
+                    values["responsible"],
+                    values["due_at"].isoformat()
+                    if isinstance(values["due_at"], datetime)
+                    else values["due_at"],
+                    values["deadline_reference"],
+                    str(task_id),
+                ),
+            )
+            return {"id": str(task_id), "status": "detected"}
+
+        if request.status is None:
+            raise HTTPException(status_code=422, detail="Informe o novo status.")
+    allowed_status = "detected" if request.status in {"pending", "rejected"} else "pending"
+    with connect() as connection:
+        result = connection.execute(
+            """
+            UPDATE tasks
+            SET status = ?
+            WHERE id = ? AND user_id = 'demo' AND status = ?
+              AND (
+                  (source = 'email' AND ? IN ('pending', 'rejected'))
+                  OR (? = 'done' AND source IN ('email', 'manual'))
+              )
+            """,
+            (
+                request.status,
+                str(task_id),
+                allowed_status,
+                request.status,
+                request.status,
+            ),
+        )
+        if result.rowcount == 0:
+            existing = connection.execute(
+                "SELECT id FROM tasks WHERE id = ? AND user_id = 'demo'",
+                (str(task_id),),
+            ).fetchone()
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Prazo não encontrado.")
+            raise HTTPException(
+                status_code=409,
+                detail="Este prazo não pode ser revisado neste estado.",
+            )
+
+    return {"id": str(task_id), "status": request.status}
 
 
 @app.post("/api/events", status_code=201)

@@ -42,6 +42,17 @@ function localDateValue(date) {
   return local.toISOString().slice(0, 10);
 }
 
+function localDateTimeValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function dateTimeInputIso(value) {
+  return value ? new Date(value).toISOString() : null;
+}
+
 function formatDate(value) {
   return new Intl.DateTimeFormat("pt-BR", {
     weekday: "short",
@@ -88,6 +99,9 @@ function App() {
   const [toast, setToast] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [selectedPending, setSelectedPending] = useState(null);
+  const [editingDetected, setEditingDetected] = useState(false);
+  const [editDraft, setEditDraft] = useState(null);
+  const [savingDetected, setSavingDetected] = useState(false);
 
   const refresh = useCallback(async () => {
     const [nextDashboard, nextEvents] = await Promise.all([
@@ -218,17 +232,17 @@ function App() {
     }
   }
 
-  async function reviewDetected(event, status) {
-    setReviewingEventId(event.id);
+  async function reviewDetected(item, status) {
+    setReviewingEventId(item.record.id);
     try {
-      await api(`/api/events/${event.id}`, {
+      await api(`${item.type === "meeting" ? "/api/events" : "/api/tasks"}/${item.record.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
       await refresh();
       setToast(status === "pending"
-        ? "Compromisso aceito e adicionado às Pendências."
-        : "Compromisso recusado e removido da revisão.");
+        ? `${item.type === "meeting" ? "Reunião" : "Prazo"} aceito e adicionado às Pendências.`
+        : `${item.type === "meeting" ? "Reunião" : "Prazo"} recusado e removido da revisão.`);
     } catch (error) {
       setPageError(error.message);
     } finally {
@@ -236,9 +250,87 @@ function App() {
     }
   }
 
+  function editDetected(item) {
+    const record = item.record;
+    const isMeeting = item.type === "meeting";
+    const durationMinutes = isMeeting
+      ? Math.max(
+          15,
+          Math.round(
+            (new Date(record.ends_at).getTime() - new Date(record.starts_at).getTime()) / 60000,
+          ),
+        )
+      : null;
+    setSelectedPending(item);
+    setEditDraft({
+      title: record.title || "",
+      description: record.description || "",
+      startsAt: isMeeting ? localDateTimeValue(record.starts_at) : "",
+      durationMinutes: durationMinutes ?? 60,
+      location: record.location || "",
+      dueAt: !isMeeting ? localDateTimeValue(record.due_at) : "",
+      responsible: !isMeeting ? record.responsible || "" : "",
+      deadlineReference: !isMeeting ? record.deadline_reference || "" : "",
+    });
+    setEditingDetected(true);
+  }
+
+  function closePendingDetails() {
+    setSelectedPending(null);
+    setEditingDetected(false);
+    setEditDraft(null);
+  }
+
+  async function saveDetectedEdit(event) {
+    event.preventDefault();
+    if (!selectedPending || !editDraft) return;
+    const { record, type } = selectedPending;
+    const isMeeting = type === "meeting";
+    setSavingDetected(true);
+    try {
+      const payload = isMeeting
+        ? {
+            title: editDraft.title,
+            description: editDraft.description,
+            starts_at: dateTimeInputIso(editDraft.startsAt),
+            ends_at: new Date(
+              new Date(editDraft.startsAt).getTime()
+              + Number(editDraft.durationMinutes) * 60000,
+            ).toISOString(),
+            location: editDraft.location,
+          }
+        : {
+            title: editDraft.title,
+            description: editDraft.description,
+            due_at: dateTimeInputIso(editDraft.dueAt),
+            responsible: editDraft.responsible,
+            deadline_reference: editDraft.deadlineReference,
+          };
+      await api(`${isMeeting ? "/api/events" : "/api/tasks"}/${record.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      await refresh();
+      setSelectedPending(null);
+      setEditingDetected(false);
+      setEditDraft(null);
+      setToast("Alterações salvas. O item continua aguardando sua revisão.");
+    } catch (error) {
+      setPageError(error.message);
+    } finally {
+      setSavingDetected(false);
+    }
+  }
+
   const detectedEvents = events.filter((event) => event.status === "detected" && event.source === "email");
   const conflicts = events.filter((event) => event.conflict);
-  const pendingTasks = dashboard?.tasks || [];
+  const tasks = dashboard?.tasks || [];
+  const detectedTasks = tasks.filter((task) => task.status === "detected" && task.source === "email");
+  const pendingTasks = tasks.filter((task) => task.status === "pending");
+  const detectedItems = [
+    ...detectedEvents.map((record) => ({ type: "meeting", record })),
+    ...detectedTasks.map((record) => ({ type: "deadline", record })),
+  ];
   const pendingMeetings = events.filter((event) => (
     event.status === "pending" || (event.status === "detected" && event.source !== "email")
   ));
@@ -352,34 +444,65 @@ function App() {
               <section className="panel detected-panel">
                 <div className="section-heading">
                   <div><h2>Compromissos encontrados</h2><p>Aceite para adicionar às Pendências ou recuse para descartar.</p></div>
-                  <span className="count-pill">{detectedEvents.length}</span>
+                  <span className="count-pill">{detectedItems.length}</span>
                 </div>
-                {detectedEvents.length ? (
+                {detectedItems.length ? (
                   <div className="simple-list">
-                    {detectedEvents.map((event) => (
-                      <article className="detected-item" key={event.id}>
-                        <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
-                        <span className="list-copy"><b>{event.title}</b><small>{formatDate(event.starts_at)}{event.location ? ` · ${event.location}` : ""}</small></span>
+                    {detectedItems.map((item) => {
+                      const { record, type } = item;
+                      const isMeeting = type === "meeting";
+                      const dateSummary = isMeeting
+                        ? formatDate(record.starts_at)
+                        : record.due_at
+                          ? `Prazo ${formatDate(record.due_at)}`
+                          : record.deadline_reference || "Prazo não informado";
+                      return (
+                      <article className="detected-item" key={`${type}-${record.id}`}>
+                        <button
+                          className="pending-item-detail"
+                          onClick={() => setSelectedPending(item)}
+                        >
+                          <span className={`list-icon ${isMeeting ? "detected-icon" : "task-icon"}`}>
+                            {isMeeting ? <CalendarDays size={17} /> : <CheckCheck size={17} />}
+                          </span>
+                          <span className="list-copy">
+                            <b>{record.title}</b>
+                            <small>{dateSummary}{isMeeting && record.location ? ` · ${record.location}` : ""}</small>
+                            {record.inferred_fields?.length > 0 && (
+                              <small className="implicit-info" title={record.inferred_fields.join(" ")}>
+                                Informação completada automaticamente: {record.inferred_fields.join(" ")}
+                              </small>
+                            )}
+                          </span>
+                          <span className="source-label">{isMeeting ? "Reunião" : "Prazo"} · E-mail</span>
+                        </button>
                         <div className="detected-actions">
                           <button
-                            className="button button-soft"
-                            onClick={() => reviewDetected(event, "pending")}
-                            disabled={reviewingEventId === event.id}
+                            className="button button-quiet"
+                            onClick={() => editDetected(item)}
+                            aria-label={`Editar ${record.title}`}
                           >
-                            <Check size={15} />Aceitar
+                            Editar
+                          </button>
+                          <button
+                            className="button button-soft"
+                            onClick={() => reviewDetected(item, "pending")}
+                            disabled={reviewingEventId === record.id}
+                          >
+                            <Check size={15} />Adicionar
                           </button>
                           <button
                             className="icon-button"
-                            onClick={() => reviewDetected(event, "rejected")}
-                            disabled={reviewingEventId === event.id}
-                            aria-label={`Recusar ${event.title}`}
+                            onClick={() => reviewDetected(item, "rejected")}
+                            disabled={reviewingEventId === record.id}
+                            aria-label={`Recusar ${record.title}`}
                             title="Recusar compromisso"
                           >
                             <X size={16} />
                           </button>
                         </div>
                       </article>
-                    ))}
+                    )})}
                   </div>
                 ) : <EmptyState text={dashboard ? "Nenhum compromisso aguardando revisão." : "Carregando compromissos..."} />}
               </section>
@@ -481,7 +604,7 @@ function App() {
       {selectedPending && (
         <div
           className="modal-backdrop"
-          onMouseDown={(event) => event.target === event.currentTarget && setSelectedPending(null)}
+          onMouseDown={(event) => event.target === event.currentTarget && closePendingDetails()}
         >
           <section
             className="scan-modal pending-details-modal"
@@ -496,17 +619,122 @@ function App() {
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setSelectedPending(null)}
+                onClick={closePendingDetails}
                 aria-label="Fechar detalhes"
               >
                 <X size={18} />
               </button>
             </div>
+            {editingDetected && editDraft ? (
+              <form className="detected-edit-form" onSubmit={saveDetectedEdit}>
+                <span className="eyebrow">
+                  {selectedPending.type === "meeting" ? "EDITAR REUNIÃO" : "EDITAR PRAZO"}
+                </span>
+                <h2 id="pending-details-title">Editar informações</h2>
+                <label>
+                  Título
+                  <input
+                    required
+                    value={editDraft.title}
+                    onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Descrição
+                  <textarea
+                    rows={4}
+                    value={editDraft.description}
+                    onChange={(event) => setEditDraft({ ...editDraft, description: event.target.value })}
+                  />
+                </label>
+                {selectedPending.type === "meeting" ? (
+                  <>
+                    <label>
+                      Data e horário de início
+                      <input
+                        type="datetime-local"
+                        required
+                        value={editDraft.startsAt}
+                        onChange={(event) => setEditDraft({ ...editDraft, startsAt: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Duração em minutos
+                      <input
+                        type="number"
+                        min="15"
+                        required
+                        value={editDraft.durationMinutes}
+                        onChange={(event) => setEditDraft({ ...editDraft, durationMinutes: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Local
+                      <input
+                        value={editDraft.location}
+                        onChange={(event) => setEditDraft({ ...editDraft, location: event.target.value })}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label>
+                      Data e horário do prazo
+                      <input
+                        type="datetime-local"
+                        value={editDraft.dueAt}
+                        onChange={(event) => setEditDraft({ ...editDraft, dueAt: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Referência do prazo
+                      <input
+                        value={editDraft.deadlineReference}
+                        onChange={(event) => setEditDraft({ ...editDraft, deadlineReference: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Responsável
+                      <input
+                        value={editDraft.responsible}
+                        onChange={(event) => setEditDraft({ ...editDraft, responsible: event.target.value })}
+                      />
+                    </label>
+                  </>
+                )}
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={() => {
+                      setEditingDetected(false);
+                      setEditDraft(null);
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="button button-primary" disabled={savingDetected}>
+                    {savingDetected ? "Salvando..." : "Salvar alterações"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
             <span className="eyebrow">{selectedPending.type === "meeting" ? "DETALHES DA REUNIÃO" : "DETALHES DO PRAZO"}</span>
             <h2 id="pending-details-title">{selectedPending.record.title}</h2>
+            {selectedPending.record.sender && (
+              <p className="pending-description sender-details">
+                Enviado por: {selectedPending.record.sender}
+              </p>
+            )}
             <p className="pending-description">
               {selectedPending.record.description || "Nenhuma descrição informada."}
             </p>
+            {selectedPending.record.inferred_fields?.length > 0 && (
+              <p className="pending-description implicit-details">
+                Informação completada automaticamente: {selectedPending.record.inferred_fields.join(" ")}
+              </p>
+            )}
             <dl className="pending-details-list">
               {selectedPending.type === "meeting" ? (
                 <>
@@ -541,6 +769,8 @@ function App() {
                 </>
               )}
             </dl>
+              </>
+            )}
           </section>
         </div>
       )}

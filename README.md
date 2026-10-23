@@ -61,7 +61,8 @@ Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das thread
 ## Organização da lógica
 
 - `app.main` registra os endpoints de chat, agenda local, tarefas, OAuth e sincronização do Gmail.
-- `app.google_integration` lê mensagens do Gmail e usa a resposta estruturada do Gemini para criar sugestões locais de compromissos a partir das threads.
+- `app.google_integration` lê mensagens do Gmail, registra os remetentes e classifica cada thread como reunião, prazo ou irrelevante antes de criar sugestões locais. Reuniões recebem valores padrão para dados essenciais ausentes; prazos são salvos como tarefas sem duração, com prazo mantido vazio se não houver data ou referência. Inferências ficam visíveis para revisão na lista de compromissos.
+- A lista “Compromissos encontrados” reúne reuniões e prazos detectados; cada item pode ser aberto para ver detalhes, editado antes da revisão, aceito para entrar em Pendências ou recusado. Os remetentes dos e-mails aparecem nos detalhes e na descrição dos registros.
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.
 - `app.assistant` contém somente os dois adaptadores diretos para respostas do Gemini.

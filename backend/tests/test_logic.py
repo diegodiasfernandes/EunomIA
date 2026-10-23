@@ -1,9 +1,12 @@
 import json
+import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.assistant import generate_natural_response, generate_structured_response
+from app.db import connect, initialize_database
 from app.features.conflict_management import identify_conflicts
 from app.google_integration import sync_google
 from app.models import MeetingRecord
@@ -93,6 +96,205 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(build.call_count, 1)
         self.assertEqual(build.call_args.args[:2], ("gmail", "v1"))
         gmail.users.return_value.messages.return_value.list.assert_called_once()
+
+    def test_rescan_reopens_rejected_meetings_but_keeps_accepted_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "rescan.sqlite"
+            gmail = MagicMock()
+            messages = gmail.users.return_value.messages.return_value
+            messages.list.return_value.execute.return_value = {
+                "messages": [{"id": "message-rejected"}, {"id": "message-pending"}]
+            }
+            received_at = datetime.now(timezone.utc)
+            messages.get.return_value.execute.side_effect = [
+                {
+                    "id": "message-rejected",
+                    "threadId": "thread-rejected",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {
+                        "headers": [
+                            {"name": "Subject", "value": "Reunião recusada"},
+                            {"name": "From", "value": "Ana Silva <ana@example.com>"},
+                        ]
+                    },
+                },
+                {
+                    "id": "message-pending",
+                    "threadId": "thread-pending",
+                    "internalDate": str(int(received_at.timestamp() * 1000)),
+                    "payload": {
+                        "headers": [{"name": "Subject", "value": "Reunião aceita"}]
+                    },
+                },
+            ]
+            extracted_event = {
+                "is_event": True,
+                "title": "Reunião",
+                "date": "2030-06-01",
+                "time": "10:00",
+                "duration_minutes": 60,
+                "location": "",
+                "description": "",
+                "preparation": "",
+                "cancelled": False,
+            }
+            extracted_without_schedule = {
+                **extracted_event,
+                "date": "",
+                "time": "",
+                "duration_minutes": 0,
+            }
+
+            with patch("app.db.database_path", return_value=database):
+                initialize_database()
+                with connect() as connection:
+                    for status, thread_id in (
+                        ("rejected", "thread-rejected"),
+                        ("pending", "thread-pending"),
+                    ):
+                        connection.execute(
+                            """
+                            INSERT INTO events(
+                                id, user_id, source_ref, title, starts_at,
+                                ends_at, status, source, updated_at
+                            )
+                            VALUES (?, 'demo', ?, ?, ?, ?, ?, 'email', ?)
+                            """,
+                            (
+                                f"event-{status}",
+                                thread_id,
+                                f"Reunião {status}",
+                                "2030-06-01T10:00:00-03:00",
+                                "2030-06-01T11:00:00-03:00",
+                                status,
+                                received_at.isoformat(),
+                            ),
+                        )
+
+                with (
+                    patch(
+                        "app.google_integration.google_credentials",
+                        return_value=object(),
+                    ),
+                    patch("app.google_integration.build", return_value=gmail),
+                    patch(
+                        "app.google_integration.generate_structured_response",
+                        side_effect=[
+                            extracted_without_schedule,
+                            extracted_event,
+                        ],
+                    ),
+                ):
+                    result = sync_google(
+                        date.today() - timedelta(days=1),
+                        date.today(),
+                    )
+
+                with connect() as connection:
+                    events = {
+                        row["source_ref"]: dict(row)
+                        for row in connection.execute(
+                            """
+                            SELECT source_ref, status, starts_at, inferred_fields,
+                                   description, sender
+                            FROM events
+                            WHERE source_ref IN (
+                                'thread-rejected', 'thread-pending'
+                            )
+                            """
+                        )
+                    }
+
+            self.assertEqual(result["email_threads_with_events"], 2)
+            self.assertEqual(events["thread-rejected"]["status"], "detected")
+            self.assertEqual(events["thread-pending"]["status"], "pending")
+            self.assertEqual(
+                events["thread-rejected"]["sender"],
+                "Ana Silva <ana@example.com>",
+            )
+            self.assertIn(
+                "Remetente(s): Ana Silva <ana@example.com>",
+                events["thread-rejected"]["description"],
+            )
+            self.assertEqual(
+                datetime.fromisoformat(events["thread-rejected"]["starts_at"]).hour,
+                9,
+            )
+            inferred_fields = json.loads(
+                events["thread-rejected"]["inferred_fields"]
+            )
+            self.assertTrue(any("Data não informada" in item for item in inferred_fields))
+            self.assertTrue(any("Horário não informado" in item for item in inferred_fields))
+
+    def test_email_deadline_is_saved_as_task_without_meeting_duration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "deadline.sqlite"
+            gmail = MagicMock()
+            messages = gmail.users.return_value.messages.return_value
+            messages.list.return_value.execute.return_value = {
+                "messages": [{"id": "deadline-message"}]
+            }
+            received_at = datetime.now(timezone.utc)
+            messages.get.return_value.execute.return_value = {
+                "id": "deadline-message",
+                "threadId": "deadline-thread",
+                "internalDate": str(int(received_at.timestamp() * 1000)),
+                "payload": {
+                    "headers": [{"name": "Subject", "value": "Enviar relatório"}]
+                },
+            }
+            extracted_deadline = {
+                "is_event": True,
+                "record_type": "deadline",
+                "title": "Enviar relatório",
+                "date": "",
+                "time": "",
+                "duration_minutes": 0,
+                "description": "Enviar o relatório mensal",
+                "responsible": "Ana",
+                "deadline_reference": "",
+                "cancelled": False,
+            }
+
+            with patch("app.db.database_path", return_value=database):
+                initialize_database()
+                with (
+                    patch(
+                        "app.google_integration.google_credentials",
+                        return_value=object(),
+                    ),
+                    patch("app.google_integration.build", return_value=gmail),
+                    patch(
+                        "app.google_integration.generate_structured_response",
+                        return_value=extracted_deadline,
+                    ),
+                ):
+                    result = sync_google(
+                        date.today() - timedelta(days=1),
+                        date.today(),
+                    )
+
+                with connect() as connection:
+                    task = connection.execute(
+                        """
+                        SELECT title, description, responsible, due_at, status,
+                               source, inferred_fields
+                        FROM tasks
+                        WHERE source_ref = 'email-deadline:deadline-thread'
+                        """
+                    ).fetchone()
+                    meeting_count = connection.execute(
+                        "SELECT COUNT(*) FROM events WHERE source_ref = 'deadline-thread'"
+                    ).fetchone()[0]
+
+            self.assertEqual(result["email_threads_with_events"], 1)
+            self.assertIsNotNone(task)
+            self.assertEqual(task["status"], "detected")
+            self.assertEqual(task["source"], "email")
+            self.assertEqual(task["due_at"], None)
+            self.assertEqual(task["responsible"], "Ana")
+            self.assertIn("Prazo não informado", task["inferred_fields"])
+            self.assertEqual(meeting_count, 0)
 
 
 class MockFixtureTests(unittest.TestCase):
