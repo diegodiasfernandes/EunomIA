@@ -1,10 +1,11 @@
 import json
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.assistant import generate_natural_response, generate_structured_response
 from app.features.conflict_management import identify_conflicts
+from app.google_integration import sync_google
 from app.models import MeetingRecord
 from app.mock_data import load_extracted_schedule_mock, load_raw_email_thread_mock
 
@@ -75,6 +76,23 @@ class AssistantTests(unittest.TestCase):
     def test_rejects_empty_response_schema(self):
         with self.assertRaises(ValueError):
             generate_structured_response("prompt", {})
+
+    def test_gmail_sync_does_not_call_google_calendar_api(self):
+        gmail = MagicMock()
+        gmail.users.return_value.messages.return_value.list.return_value.execute.return_value = {}
+
+        with (
+            patch("app.google_integration.google_credentials", return_value=object()),
+            patch("app.google_integration.build", return_value=gmail) as build,
+            patch("app.google_integration.connect"),
+        ):
+            result = sync_google()
+
+        self.assertEqual(result["emails"], 0)
+        self.assertEqual(result["email_threads_with_events"], 0)
+        self.assertEqual(build.call_count, 1)
+        self.assertEqual(build.call_args.args[:2], ("gmail", "v1"))
+        gmail.users.return_value.messages.return_value.list.assert_called_once()
 
 
 class MockFixtureTests(unittest.TestCase):

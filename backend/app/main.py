@@ -1,6 +1,7 @@
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .assistant import generate_natural_response
 from .db import connect, initialize_database
+from .features.conflict_management import identify_conflicts
 from .features.intent_detection import detect_intent
 from .google_integration import (
     begin_oauth,
@@ -28,7 +30,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 app = FastAPI(
     title="EunomIA Assistant API",
-    description="API de chat, agenda e integração com Gmail e Google Calendar.",
+    description="API de chat, agenda local e integração com Gmail.",
     version="0.1.0",
 )
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
@@ -60,6 +62,10 @@ class EventConfirmationRequest(BaseModel):
     starts_at: datetime
     ends_at: datetime
     location: str = ""
+
+
+class EventReviewRequest(BaseModel):
+    status: Literal["pending", "rejected"]
 
 
 class TaskConfirmationRequest(BaseModel):
@@ -108,7 +114,51 @@ def events():
             """
         ).fetchall()
 
-    return {"events": [dict(row) for row in rows]}
+    meetings = [
+        MeetingRecord(
+            id=row["id"],
+            title=row["title"],
+            description=row["description"],
+            starts_at=row["starts_at"],
+            ends_at=row["ends_at"],
+            location=row["location"] or None,
+            status=row["status"],
+            source=row["source"],
+        )
+        for row in rows
+    ]
+    return {"events": identify_conflicts(meetings)}
+
+
+@app.patch("/api/events/{event_id}")
+def review_email_event(event_id: UUID, request: EventReviewRequest):
+    with connect() as connection:
+        result = connection.execute(
+            """
+            UPDATE events
+            SET status = ?, updated_at = ?
+            WHERE id = ? AND user_id = 'demo'
+              AND source = 'email' AND status = 'detected'
+            """,
+            (
+                request.status,
+                datetime.now(ZoneInfo("America/Fortaleza")).isoformat(),
+                str(event_id),
+            ),
+        )
+        if result.rowcount == 0:
+            existing = connection.execute(
+                "SELECT id FROM events WHERE id = ? AND user_id = 'demo'",
+                (str(event_id),),
+            ).fetchone()
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Compromisso não encontrado.")
+            raise HTTPException(
+                status_code=409,
+                detail="Este compromisso já foi revisado ou não veio de um e-mail.",
+            )
+
+    return {"id": str(event_id), "status": request.status}
 
 
 @app.post("/api/events", status_code=201)
@@ -137,7 +187,7 @@ def create_pending_event(request: EventConfirmationRequest):
         duration_minutes=int(
             (request.ends_at - request.starts_at).total_seconds() // 60
         ),
-        status="detected",
+        status="pending",
         source="manual",
         location=request.location,
     )
@@ -153,7 +203,7 @@ def create_pending_event(request: EventConfirmationRequest):
                     id, user_id, title, description, starts_at, ends_at, location,
                     status, source, updated_at
                 )
-                VALUES (?, 'demo', ?, ?, ?, ?, ?, 'detected', 'manual', ?)
+                VALUES (?, 'demo', ?, ?, ?, ?, ?, 'pending', 'manual', ?)
                 """,
                 (
                     meeting.id,
@@ -389,6 +439,11 @@ def google_sync(request: GoogleSyncRequest | None = None):
         result = sync_google(request.email_since, request.email_until)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Não foi possível analisar os e-mails: {error}",
+        ) from error
     except (HttpError, GoogleAuthError, OSError, RuntimeError) as error:
         raise HTTPException(
             status_code=502,

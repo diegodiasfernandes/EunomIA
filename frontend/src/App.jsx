@@ -74,8 +74,10 @@ function App() {
   });
   const [loading, setLoading] = useState(false);
   const [confirmingEventId, setConfirmingEventId] = useState("");
+  const [reviewingEventId, setReviewingEventId] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [showScanDialog, setShowScanDialog] = useState(false);
+  const [scanError, setScanError] = useState("");
   const [scanSince, setScanSince] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 30);
@@ -138,7 +140,7 @@ function App() {
   async function scanEmails(event) {
     event.preventDefault();
     setSyncing(true);
-    setPageError("");
+    setScanError("");
     try {
       const result = await api("/api/integrations/google/sync", {
         method: "POST",
@@ -148,7 +150,7 @@ function App() {
       setShowScanDialog(false);
       setToast(`Varredura concluída: ${result.result.emails} e-mails e ${result.result.email_threads_with_events} possíveis compromissos.`);
     } catch (error) {
-      setPageError(error.message);
+      setScanError(error.message);
     } finally {
       setSyncing(false);
     }
@@ -216,20 +218,30 @@ function App() {
     }
   }
 
-  async function confirmDetected(event) {
+  async function reviewDetected(event, status) {
+    setReviewingEventId(event.id);
     try {
-      await api(`/api/events/${event.id}`, { method: "PATCH", body: JSON.stringify({ status: "confirmed" }) });
+      await api(`/api/events/${event.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
       await refresh();
-      setToast("Compromisso confirmado na agenda conectada.");
+      setToast(status === "pending"
+        ? "Compromisso aceito e adicionado às Pendências."
+        : "Compromisso recusado e removido da revisão.");
     } catch (error) {
       setPageError(error.message);
+    } finally {
+      setReviewingEventId("");
     }
   }
 
   const detectedEvents = events.filter((event) => event.status === "detected" && event.source === "email");
   const conflicts = events.filter((event) => event.conflict);
   const pendingTasks = dashboard?.tasks || [];
-  const pendingMeetings = events.filter((event) => event.status === "detected");
+  const pendingMeetings = events.filter((event) => (
+    event.status === "pending" || (event.status === "detected" && event.source !== "email")
+  ));
   const pendingCount = pendingTasks.length + pendingMeetings.length;
   const googleConnected = dashboard?.google.connected;
   const today = localDateValue(new Date());
@@ -268,7 +280,7 @@ function App() {
           <div className={`connection-dot ${googleConnected ? "connected" : ""}`} />
           <div className="connection-copy">
             <b>{googleConnected ? "Google conectado" : "Conecte sua conta"}</b>
-            <small>{dashboard?.google.email || "Gmail e Google Calendar"}</small>
+            <small>{dashboard?.google.email || "Gmail"}</small>
           </div>
           {!googleConnected && <button className="connect-link" onClick={connectGoogle}>Conectar</button>}
         </section>
@@ -339,7 +351,7 @@ function App() {
 
               <section className="panel detected-panel">
                 <div className="section-heading">
-                  <div><h2>Compromissos encontrados</h2><p>Revise antes de adicionar à sua agenda conectada.</p></div>
+                  <div><h2>Compromissos encontrados</h2><p>Aceite para adicionar às Pendências ou recuse para descartar.</p></div>
                   <span className="count-pill">{detectedEvents.length}</span>
                 </div>
                 {detectedEvents.length ? (
@@ -348,7 +360,24 @@ function App() {
                       <article className="detected-item" key={event.id}>
                         <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
                         <span className="list-copy"><b>{event.title}</b><small>{formatDate(event.starts_at)}{event.location ? ` · ${event.location}` : ""}</small></span>
-                        <button className="button button-soft" onClick={() => confirmDetected(event)}><Check size={15} />Adicionar</button>
+                        <div className="detected-actions">
+                          <button
+                            className="button button-soft"
+                            onClick={() => reviewDetected(event, "pending")}
+                            disabled={reviewingEventId === event.id}
+                          >
+                            <Check size={15} />Aceitar
+                          </button>
+                          <button
+                            className="icon-button"
+                            onClick={() => reviewDetected(event, "rejected")}
+                            disabled={reviewingEventId === event.id}
+                            aria-label={`Recusar ${event.title}`}
+                            title="Recusar compromisso"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -426,7 +455,7 @@ function App() {
 
       {showScanDialog && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowScanDialog(false)}>
-          <form className="scan-modal" onSubmit={scanEmails}>
+          <form className="scan-modal" onSubmit={scanEmails} aria-busy={syncing}>
             <div className="modal-heading">
               <span className="assistant-icon"><Mail size={18} /></span>
               <button type="button" className="icon-button" onClick={() => setShowScanDialog(false)} aria-label="Fechar"><X size={18} /></button>
@@ -439,6 +468,7 @@ function App() {
               <label>Até<input type="date" required max={today} min={scanSince} value={scanUntil} onChange={(event) => setScanUntil(event.target.value)} /></label>
             </div>
             {scanSince && scanUntil && scanSince > scanUntil && <p className="form-error">A data inicial deve ser anterior ou igual à data final.</p>}
+            {scanError && <p className="form-error" role="alert">{scanError}</p>}
             <div className="modal-actions">
               <button type="button" className="button button-quiet" onClick={() => setShowScanDialog(false)}>Cancelar</button>
               <button className="button button-primary" disabled={syncing || !scanSince || !scanUntil || scanSince > scanUntil}>

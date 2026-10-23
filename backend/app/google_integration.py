@@ -19,7 +19,6 @@ if os.getenv("ENVIRONMENT", "development") == "development":
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar",
 ]
 
 USER_ID = "demo"
@@ -290,12 +289,6 @@ def sync_google(
             "A data inicial deve ser anterior ou igual à data final."
         )
 
-    calendar = build(
-        "calendar",
-        "v3",
-        credentials=credentials,
-    )
-
     gmail = build(
         "gmail",
         "v1",
@@ -303,106 +296,6 @@ def sync_google(
     )
 
     now = datetime.now(timezone.utc)
-
-    time_min = (
-        now - timedelta(days=30)
-    ).isoformat()
-
-    time_max = (
-        now + timedelta(days=90)
-    ).isoformat()
-
-    calendar_items = (
-        calendar.events()
-        .list(
-            calendarId="primary",
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            orderBy="startTime",
-            maxResults=250,
-        )
-        .execute()
-        .get("items", [])
-    )
-
-    calendar_count = 0
-
-    with connect() as connection:
-        for item in calendar_items:
-            start_value = item.get("start", {}).get("dateTime")
-            end_value = item.get("end", {}).get("dateTime")
-
-            if not start_value and item.get("start", {}).get("date"):
-                start_value = (
-                    item["start"]["date"] + "T09:00:00+00:00"
-                )
-                end_value = (
-                    item["end"]["date"] + "T10:00:00+00:00"
-                )
-
-            if not start_value or not end_value:
-                continue
-
-            connection.execute(
-                """
-                INSERT INTO events(
-                    id,
-                    user_id,
-                    provider_id,
-                    title,
-                    description,
-                    starts_at,
-                    ends_at,
-                    location,
-                    status,
-                    source,
-                    updated_at
-                )
-                VALUES (
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    'calendar',
-                    ?
-                )
-                ON CONFLICT(user_id, provider_id) DO UPDATE SET
-                    title = excluded.title,
-                    description = excluded.description,
-                    starts_at = excluded.starts_at,
-                    ends_at = excluded.ends_at,
-                    location = excluded.location,
-                    status = excluded.status,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    str(uuid4()),
-                    USER_ID,
-                    item["id"],
-                    item.get(
-                        "summary",
-                        "Compromisso sem título",
-                    ),
-                    item.get("description", ""),
-                    start_value,
-                    end_value,
-                    item.get("location", ""),
-                    (
-                        "cancelled"
-                        if item.get("status") == "cancelled"
-                        else "confirmed"
-                    ),
-                    now.isoformat(),
-                ),
-            )
-
-            calendar_count += 1
 
     gmail_query = (
         f"after:{email_since.strftime('%Y/%m/%d')} "
@@ -584,7 +477,11 @@ def sync_google(
                     starts_at = excluded.starts_at,
                     ends_at = excluded.ends_at,
                     location = excluded.location,
-                    status = excluded.status,
+                    status = CASE
+                        WHEN excluded.status = 'cancelled' THEN 'cancelled'
+                        WHEN events.status = 'rejected' THEN 'rejected'
+                        ELSE excluded.status
+                    END,
                     preparation = excluded.preparation,
                     updated_at = excluded.updated_at
                 """,
@@ -696,54 +593,6 @@ def sync_google(
                 detected_count += 1
 
     return {
-        "calendar_events": calendar_count,
         "emails": len(email_records),
         "email_threads_with_events": detected_count,
     }
-
-
-def write_calendar_event(event: dict) -> str:
-    credentials = google_credentials()
-
-    if credentials is None:
-        return ""
-
-    calendar = build(
-        "calendar",
-        "v3",
-        credentials=credentials,
-    )
-
-    body = {
-        "summary": event["title"],
-        "description": event.get("description", ""),
-        "location": event.get("location", ""),
-        "start": {
-            "dateTime": event["starts_at"],
-        },
-        "end": {
-            "dateTime": event["ends_at"],
-        },
-    }
-
-    if event.get("provider_id"):
-        result = (
-            calendar.events()
-            .update(
-                calendarId="primary",
-                eventId=event["provider_id"],
-                body=body,
-            )
-            .execute()
-        )
-    else:
-        result = (
-            calendar.events()
-            .insert(
-                calendarId="primary",
-                body=body,
-            )
-            .execute()
-        )
-
-    return result["id"]

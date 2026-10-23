@@ -1,12 +1,12 @@
 # EunomIA
 
-Protótipo de assistente pessoal com FastAPI, SQLite e Gemini, incluindo chat, agenda local e integração opcional com Gmail e Google Calendar.
+Protótipo de assistente pessoal com FastAPI, SQLite e Gemini, incluindo chat, agenda local e integração opcional com Gmail.
 
 ## Requisitos
 
 - Python 3.10 ou superior
 - Node.js 20 ou superior e npm
-- Para integrações reais: credenciais OAuth do Google
+- Para importar e-mails: credenciais OAuth do Google
 - Opcional: chave da Gemini API
 
 ## Iniciar localmente
@@ -46,22 +46,22 @@ python -m unittest discover -s tests -v
 
 ## Google OAuth
 
-1. No Google Cloud Console, habilite Gmail API e Google Calendar API e configure a tela de consentimento OAuth.
+1. No Google Cloud Console, habilite Gmail API e configure a tela de consentimento OAuth.
 2. Crie um OAuth Client ID do tipo **Web application**.
 3. Cadastre `http://localhost:8000/api/integrations/google/callback` como URI de redirecionamento autorizada.
 4. Informe `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` no `backend/.env`.
-5. Reinicie a API e autorize a conta pelo endpoint `/api/integrations/google/auth`. Use `POST /api/integrations/google/sync` para importar eventos e e-mails do período solicitado.
+5. Reinicie a API e autorize a conta pelo endpoint `/api/integrations/google/auth`. A varredura acessa apenas o Gmail e exige `GEMINI_API_KEY` para identificar compromissos nas mensagens. Os compromissos encontrados ficam para revisão local; ao aceitar, entram em Pendências, e ao recusar são descartados. A etapa não usa nem exige a Google Calendar API.
 
-O consentimento solicita leitura do Gmail e acesso de leitura e escrita ao Google Calendar. O token OAuth é armazenado no SQLite local; mantenha o arquivo do banco fora do controle de versão.
+O consentimento solicita somente leitura do Gmail. O token OAuth é armazenado no SQLite local; mantenha o arquivo do banco fora do controle de versão.
 
 ## Gemini
 
-Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das threads importadas do Gmail. `app.assistant` oferece duas funções: `generate_natural_response(prompt)` e `generate_structured_response(prompt, response_structure)`.
+Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das threads importadas do Gmail e habilitar respostas do assistente. `app.assistant` oferece duas funções: `generate_natural_response(prompt)` e `generate_structured_response(prompt, response_structure)`.
 
 ## Organização da lógica
 
-- `app.main` registra apenas os endpoints de status, OAuth e sincronização com o Google.
-- `app.google_integration` executa a sincronização do Gmail/Google Calendar e usa a resposta estruturada do Gemini na consolidação de threads.
+- `app.main` registra os endpoints de chat, agenda local, tarefas, OAuth e sincronização do Gmail.
+- `app.google_integration` lê mensagens do Gmail e usa a resposta estruturada do Gemini para criar sugestões locais de compromissos a partir das threads.
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.
 - `app.assistant` contém somente os dois adaptadores diretos para respostas do Gemini.

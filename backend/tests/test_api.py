@@ -44,7 +44,7 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertIn("connected", response.json())
 
     def test_google_sync_uses_the_selected_email_date_range(self):
-        result = {"calendar_events": 0, "emails": 8, "email_threads_with_events": 2}
+        result = {"emails": 8, "email_threads_with_events": 2}
         request_body = {"email_since": "2026-09-01", "email_until": "2026-09-29"}
         path = "/api/integrations/google/sync"
         with patch("app.main.sync_google", return_value=result) as sync:
@@ -66,6 +66,18 @@ class GoogleIntegrationApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         sync.assert_not_called()
+
+    def test_google_sync_reports_missing_gemini_configuration(self):
+        request_body = {"email_since": "2026-10-01", "email_until": "2026-10-22"}
+        path = "/api/integrations/google/sync"
+        with patch(
+            "app.main.sync_google",
+            side_effect=LookupError("GEMINI_API_KEY não configurada"),
+        ):
+            response = self.client.post(path, json=request_body)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("GEMINI_API_KEY não configurada", response.json()["detail"])
 
     def test_chat_uses_natural_response_for_non_event_messages(self):
         message = "Como você pode me ajudar?"
@@ -154,7 +166,7 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         duplicate_response = self.client.post("/api/events", json=request_body)
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["meeting"]["status"], "detected")
+        self.assertEqual(response.json()["meeting"]["status"], "pending")
         self.assertEqual(
             response.json()["meeting"]["duration_minutes"],
             60,
@@ -171,6 +183,53 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertEqual(
             added_events[0]["description"],
             request_body["description"],
+        )
+
+    def test_reviewing_email_event_accepts_to_pending_or_rejects(self):
+        event_ids = {
+            "accepted": "9c0fe3f0-5d77-4e0b-a905-9f3e5beff101",
+            "rejected": "1cf4d891-d3eb-41bd-9c25-485344402f81",
+        }
+        from app.db import connect
+
+        with connect() as connection:
+            for action, event_id in event_ids.items():
+                connection.execute(
+                    """
+                    INSERT INTO events(
+                        id, user_id, source_ref, title, starts_at, ends_at,
+                        status, source, updated_at
+                    )
+                    VALUES (?, 'demo', ?, ?, ?, ?, 'detected', 'email', ?)
+                    """,
+                    (
+                        event_id,
+                        f"thread-{action}",
+                        f"Reunião {action}",
+                        "2030-06-01T10:00:00-03:00",
+                        "2030-06-01T11:00:00-03:00",
+                        "2030-05-01T00:00:00-03:00",
+                    ),
+                )
+
+        accepted = self.client.patch(
+            f"/api/events/{event_ids['accepted']}",
+            json={"status": "pending"},
+        )
+        rejected = self.client.patch(
+            f"/api/events/{event_ids['rejected']}",
+            json={"status": "rejected"},
+        )
+
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["status"], "pending")
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(rejected.json()["status"], "rejected")
+        events = self.client.get("/api/events").json()["events"]
+        self.assertIn("conflict", events[0])
+        self.assertIn(
+            event_ids["accepted"],
+            [event["id"] for event in events if event["status"] == "pending"],
         )
 
     def test_confirmation_requires_timezone_and_positive_duration(self):

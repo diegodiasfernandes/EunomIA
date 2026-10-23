@@ -7,7 +7,11 @@ DEFAULT_UNKNOWN_MEETING_DURATION_MINUTES = 60
 
 
 def identify_conflicts(meetings: list[MeetingRecord]) -> list[MeetingRecord]:
-    active = [meeting for meeting in meetings if meeting.status != "cancelled"]
+    active = [
+        meeting
+        for meeting in meetings
+        if meeting.status not in {"cancelled", "rejected"}
+    ]
     intervals: dict[str, tuple[datetime, datetime, bool]] = {}
     conflicts: dict[str, list[MeetingConflict]] = {
         meeting.id: [] for meeting in active
