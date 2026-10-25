@@ -51,11 +51,18 @@ def identify_conflicts(meetings: list[MeetingRecord]) -> list[MeetingRecord]:
                     if first_duration_known and second_duration_known
                     else "possible"
                 )
+                overlap_minutes = int(
+                    (min(first_end, second_end) - max(first_start, second_start))
+                    .total_seconds()
+                    // 60
+                )
                 conflicts[first.id].append(
                     MeetingConflict(
                         id=second.id,
                         title=second.title,
                         certainty=certainty,
+                        overlap_minutes=overlap_minutes,
+                        status=second.status,
                     )
                 )
                 conflicts[second.id].append(
@@ -63,6 +70,8 @@ def identify_conflicts(meetings: list[MeetingRecord]) -> list[MeetingRecord]:
                         id=first.id,
                         title=first.title,
                         certainty=certainty,
+                        overlap_minutes=overlap_minutes,
+                        status=first.status,
                     )
                 )
 

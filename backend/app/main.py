@@ -20,6 +20,7 @@ from .features.conflict_management import identify_conflicts
 from .features.intent_detection import detect_intent
 from .google_integration import (
     begin_oauth,
+    create_calendar_event,
     finish_oauth,
     integration_status,
     sync_google,
@@ -31,7 +32,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 app = FastAPI(
     title="EunomIA Assistant API",
-    description="API de chat, agenda local e integração com Gmail.",
+    description="API de chat, agenda local e integração com Gmail e Google Calendar.",
     version="0.1.0",
 )
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
@@ -250,6 +251,78 @@ def review_event(event_id: UUID, request: EventReviewRequest):
 
         if request.status is None:
             raise HTTPException(status_code=422, detail="Informe o novo status.")
+        if request.status == "confirmed":
+            event = connection.execute(
+                """
+                SELECT id, title, description, starts_at, ends_at, location
+                FROM events
+                WHERE id = ? AND user_id = 'demo'
+                  AND status IN ('pending', 'detected')
+                """,
+                (str(event_id),),
+            ).fetchone()
+            if event is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Este compromisso não pode ser confirmado neste estado.",
+                )
+
+            blocking = connection.execute(
+                """
+                SELECT title FROM events
+                WHERE user_id = 'demo' AND status = 'confirmed' AND id != ?
+                  AND starts_at < ? AND ends_at > ?
+                ORDER BY starts_at
+                """,
+                (str(event_id), event["ends_at"], event["starts_at"]),
+            ).fetchall()
+            if blocking:
+                names = ", ".join(item["title"] for item in blocking[:3])
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Este horário conflita com compromisso(s) confirmado(s): "
+                        f"{names}. Edite ou cancele um deles antes de confirmar."
+                    ),
+                )
+
+            try:
+                calendar_event_id = create_calendar_event(
+                    title=event["title"],
+                    description=event["description"],
+                    starts_at=datetime.fromisoformat(event["starts_at"]),
+                    ends_at=datetime.fromisoformat(event["ends_at"]),
+                    location=event["location"],
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except (HttpError, GoogleAuthError, OSError) as error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Não foi possível criar o evento no Google Calendar: {error}",
+                ) from error
+
+            result = connection.execute(
+                """
+                UPDATE events
+                SET status = 'confirmed', provider_id = COALESCE(?, provider_id), updated_at = ?
+                WHERE id = ? AND user_id = 'demo'
+                  AND status IN ('pending', 'detected')
+                """,
+                (
+                    calendar_event_id,
+                    datetime.now(ZoneInfo("America/Fortaleza")).isoformat(),
+                    str(event_id),
+                ),
+            )
+            if result.rowcount == 0:
+                raise HTTPException(status_code=409, detail="O compromisso foi alterado. Atualize a tela.")
+            return {
+                "id": str(event_id),
+                "status": "confirmed",
+                "calendar_synced": bool(calendar_event_id),
+            }
+
         result = connection.execute(
             """
             UPDATE events
