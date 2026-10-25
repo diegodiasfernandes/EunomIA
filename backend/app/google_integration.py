@@ -19,6 +19,7 @@ if os.getenv("ENVIRONMENT", "development") == "development":
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 
 USER_ID = "demo"
@@ -378,10 +379,62 @@ def integration_status() -> dict:
             """
         ).fetchone()
 
+    calendar_connected = False
+    if row:
+        try:
+            granted_scopes = json.loads(row["credentials_json"]).get("scopes", [])
+            calendar_connected = (
+                "https://www.googleapis.com/auth/calendar.events" in granted_scopes
+            )
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            calendar_connected = False
+
     return {
         "connected": bool(row),
         "email": row["account_email"] if row else None,
+        "calendar_connected": calendar_connected,
     }
+
+
+def create_calendar_event(
+    *,
+    title: str,
+    description: str,
+    starts_at: datetime,
+    ends_at: datetime,
+    location: str,
+) -> str | None:
+    """Creates the accepted meeting in the user's primary Google Calendar."""
+    credentials = google_credentials()
+    if credentials is None:
+        return None
+    if not integration_status()["calendar_connected"]:
+        raise ValueError(
+            "Reconecte sua conta Google para autorizar o acesso ao Google Calendar."
+        )
+
+    event = (
+        build("calendar", "v3", credentials=credentials)
+        .events()
+        .insert(
+            calendarId="primary",
+            body={
+                "summary": title,
+                "description": description,
+                "location": location,
+                "start": {
+                    "dateTime": starts_at.isoformat(),
+                    "timeZone": "America/Fortaleza",
+                },
+                "end": {
+                    "dateTime": ends_at.isoformat(),
+                    "timeZone": "America/Fortaleza",
+                },
+            },
+        )
+        .execute()
+    )
+    return event.get("id")
 
 
 def _email_body(payload: dict) -> str:

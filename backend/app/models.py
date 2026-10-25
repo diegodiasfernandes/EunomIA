@@ -8,6 +8,8 @@ class MeetingConflict(BaseModel):
     id: str
     title: str
     certainty: Literal["confirmed", "possible"]
+    overlap_minutes: int | None = None
+    status: str = "pending"
 
 
 class MeetingRecord(BaseModel):

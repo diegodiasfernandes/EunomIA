@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  CalendarCheck,
   CalendarDays,
   Check,
   CheckCheck,
@@ -308,12 +309,16 @@ function App() {
   async function updateMeetingStatus(meeting, status) {
     setUpdatingEventId(meeting.id);
     try {
-      await api(`/api/events/${meeting.id}`, {
+      const result = await api(`/api/events/${meeting.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
       await refresh();
-      setToast(status === "confirmed" ? "Compromisso confirmado." : "Compromisso cancelado.");
+      setToast(status === "confirmed"
+        ? result.calendar_synced
+          ? "Compromisso confirmado e adicionado ao Google Calendar."
+          : "Compromisso confirmado localmente. Conecte o Google Calendar para sincronizar os próximos."
+        : "Compromisso cancelado.");
     } catch (error) {
       setPageError(error.message);
     } finally {
@@ -343,6 +348,7 @@ function App() {
   const pendingMeetings = events.filter((event) => event.status === "pending" || event.status === "detected");
   const pendingCount = pendingTasks.length + pendingMeetings.length;
   const googleConnected = dashboard?.google.connected;
+  const calendarConnected = dashboard?.google.calendar_connected;
   const today = localDateValue(new Date());
 
   return (
@@ -376,12 +382,12 @@ function App() {
         </nav>
         <div className="sidebar-spacer" />
         <section className="connection-card" aria-label="Conexão com Google">
-          <div className={`connection-dot ${googleConnected ? "connected" : ""}`} />
+          <div className={`connection-dot ${calendarConnected ? "connected" : ""}`} />
           <div className="connection-copy">
-            <b>{googleConnected ? "Google conectado" : "Conecte sua conta"}</b>
-            <small>{dashboard?.google.email || "Gmail"}</small>
+            <b>{calendarConnected ? "Google Calendar conectado" : googleConnected ? "Autorize o Calendar" : "Conecte sua conta"}</b>
+            <small>{dashboard?.google.email || "Gmail e Calendar"}</small>
           </div>
-          {!googleConnected && <button className="connect-link" onClick={connectGoogle}>Conectar</button>}
+          {!calendarConnected && <button className="connect-link" onClick={connectGoogle}>{googleConnected ? "Autorizar" : "Conectar"}</button>}
         </section>
         <div className="profile"><span className="avatar">D</span><span><b>Diego Dias</b><small>Conta pessoal</small></span></div>
       </aside>
@@ -409,7 +415,7 @@ function App() {
                   <span className="assistant-icon"><Sparkles size={18} /></span>
                   <div><b>EunomIA</b><small>Assistente pessoal</small></div>
                   <span className={`connection-status ${googleConnected ? "connected" : ""}`}>
-                    <i />{googleConnected ? "Google conectado" : "Google desconectado"}
+                    <i />{calendarConnected ? "Calendar conectado" : "Calendar desconectado"}
                   </span>
                 </div>
                 <div className="chat-messages" aria-live="polite">
@@ -507,7 +513,7 @@ function App() {
                         >
                           <span className="list-icon detected-icon"><CalendarDays size={17} /></span>
                           <span className="list-copy"><b>{meeting.title}</b><small>{formatDate(meeting.starts_at)}</small></span>
-                          <span className="source-label">Reunião</span>
+                          <span className="source-label">{calendarConnected ? <><CalendarCheck size={13} />Calendar</> : "Reunião"}</span>
                         </button>
                         <div className="pending-event-actions">
                           <button
@@ -547,7 +553,7 @@ function App() {
               <div className="page-intro">
                 <span className="eyebrow">HORÁRIOS SOBREPOSTOS</span>
                 <h1>Conflitos</h1>
-                <p>Revise compromissos que acontecem no mesmo horário.</p>
+                <p>Veja exatamente o que se sobrepõe antes de confirmar sua agenda.</p>
               </div>
               <section className="panel simple-panel">
                 <div className="section-heading"><div><h2>Precisa de atenção</h2><p>{conflicts.length ? `${conflicts.length} ${conflicts.length === 1 ? "conflito" : "conflitos"}` : "Sua agenda está livre de sobreposições"}</p></div><span className="count-pill count-warn">{conflicts.length}</span></div>
@@ -556,8 +562,14 @@ function App() {
                     {conflicts.map((event) => (
                       <article className="conflict-item" key={event.id}>
                         <span className="list-icon conflict-icon"><AlertTriangle size={17} /></span>
-                        <span className="list-copy"><b>{event.title}</b><small>{formatDate(event.starts_at)}{event.location ? ` · ${event.location}` : ""}</small></span>
-                        <span className="conflict-label">Conflito</span>
+                        <span className="list-copy">
+                          <b>{event.title}</b>
+                          <small>{formatDate(event.starts_at)}{event.location ? ` · ${event.location}` : ""}</small>
+                          <small className="conflict-detail">
+                            Cruza com {event.conflicts_with.map((conflict) => `${conflict.title}${conflict.overlap_minutes ? ` (${conflict.overlap_minutes} min)` : ""}`).join(", ")}
+                          </small>
+                        </span>
+                        <span className="conflict-label">{event.conflicts_with.some((conflict) => conflict.status === "confirmed") ? "Bloqueia confirmação" : "Revisar"}</span>
                       </article>
                     ))}
                   </div>
