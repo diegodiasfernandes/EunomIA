@@ -5,7 +5,8 @@ Protótipo de assistente pessoal com FastAPI, SQLite e Gemini, incluindo chat, a
 ## Requisitos
 
 - Python 3.10 ou superior
-- Node.js 20 ou superior e npm
+- Node.js 20.19 ou superior (ou 22.12+) e npm
+- Para a extensão: Google Chrome ou outro navegador baseado em Chromium (Edge, Brave)
 - Para importar e-mails: credenciais OAuth do Google
 - Opcional: chave da Gemini API
 
@@ -37,7 +38,20 @@ Abra <http://localhost:5173>.
 
 ### Extensão do Google Calendar
 
-A extensão coloca o botão da EunomIA na lateral direita do Google Calendar. O painel reúne o que aguarda aprovação, a agenda gerenciada pela EunomIA (com conflitos e histórico), a varredura de e-mails e o chat.
+A extensão coloca o botão da EunomIA na lateral direita do Google Calendar. O painel reúne o que aguarda aprovação, a agenda gerenciada pela EunomIA (com conflitos e histórico), a varredura de e-mails e o chat. Ela não funciona sozinha: todos os dados vêm da API, que precisa estar em execução (veja [API](#api)).
+
+#### 1. Configurar a URL da API (opcional)
+
+Por padrão a extensão acessa `http://localhost:8000`. Para usar outro endereço, crie `extension/.env` a partir do exemplo e altere `VITE_API_URL`:
+
+```powershell
+cd extension
+Copy-Item .env.example .env
+```
+
+A extensão só recebe permissão de acesso a essa origem. Como o valor é embutido no build, qualquer alteração exige gerar a extensão de novo e recarregá-la no navegador.
+
+#### 2. Instalar e gerar a extensão
 
 ```powershell
 cd extension
@@ -45,11 +59,40 @@ npm install
 npm run build
 ```
 
-1. Abra `chrome://extensions`, ative o **Modo do desenvolvedor** e clique em **Carregar sem compactação**.
-2. Selecione a pasta `extension/dist`.
-3. Com a API em execução, abra <https://calendar.google.com> e clique no ícone azul na lateral direita.
+O build verifica os tipos (`tsc`) e grava a extensão pronta em `extension/dist`.
 
-Para desenvolver com recarga automática, rode `npm run dev` (porta 5174) e carregue a mesma pasta `dist`. A URL da API vem de `VITE_API_URL` (padrão `http://localhost:8000`, veja `extension/.env.example`); a extensão só recebe permissão de acesso a essa origem. O botão **Conectar Google** abre o consentimento OAuth em uma janela própria, que fecha sozinha quando a API confirma a autorização do Calendar.
+#### 3. Carregar no Chrome
+
+1. Abra `chrome://extensions` (no Edge, `edge://extensions`).
+2. Ative o **Modo do desenvolvedor**.
+3. Clique em **Carregar sem compactação** e selecione a pasta `extension/dist`.
+4. A extensão **EunomIA para Google Calendar** aparece na lista; não é preciso fixá-la na barra, pois ela atua dentro do Calendar.
+
+#### 4. Usar
+
+1. Inicie a API (`uvicorn app.main:app --reload --port 8000` em `backend`).
+2. Abra <https://calendar.google.com> (ou recarregue a aba, se já estava aberta) e clique no botão azul na lateral direita.
+3. Para importar e-mails e criar eventos no Calendar, clique em **Conectar Google**. O consentimento OAuth abre em uma janela própria, que fecha sozinha quando a API confirma a autorização do Calendar. Esse passo exige as credenciais descritas em [Google OAuth](#google-oauth).
+
+#### Desenvolvimento com recarga automática
+
+```powershell
+cd extension
+npm run dev
+```
+
+O servidor de desenvolvimento usa a porta 5174 e também grava em `extension/dist`; carregue essa pasta como no passo 3. Mantenha o `npm run dev` rodando enquanto usar essa versão, pois ela busca o código no servidor local. Alterações no painel são aplicadas automaticamente; alterações no `manifest.config.ts` ou no `.env` exigem reiniciar o comando e recarregar a extensão. Para checar os tipos sem gerar o build, use `npm run typecheck`. Ao terminar, rode `npm run build` para voltar a uma versão que funciona sem o servidor.
+
+#### Atualizar após mudanças
+
+Depois de um novo `npm run build`, clique em **Recarregar** (↻) no cartão da extensão em `chrome://extensions` e recarregue a aba do Google Calendar.
+
+#### Problemas comuns
+
+- **"Não foi possível acessar a API em …"**: a API não está em execução ou `VITE_API_URL` aponta para outro endereço.
+- **O botão não aparece**: recarregue a aba do Calendar depois de instalar ou recarregar a extensão e confira se ela está ativada em `chrome://extensions`.
+- **`npm run dev` falha com porta em uso**: libere a porta 5174, que é fixa na configuração.
+- **Conectar Google não conclui**: confira `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e o URI de redirecionamento no Google Cloud Console.
 
 ## Testes
 
