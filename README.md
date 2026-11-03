@@ -35,6 +35,22 @@ npm run dev
 
 Abra <http://localhost:5173>.
 
+### Extensão do Google Calendar
+
+A extensão coloca o botão da EunomIA na lateral direita do Google Calendar. O painel reúne o que aguarda aprovação, a agenda gerenciada pela EunomIA (com conflitos e histórico), a varredura de e-mails e o chat.
+
+```powershell
+cd extension
+npm install
+npm run build
+```
+
+1. Abra `chrome://extensions`, ative o **Modo do desenvolvedor** e clique em **Carregar sem compactação**.
+2. Selecione a pasta `extension/dist`.
+3. Com a API em execução, abra <https://calendar.google.com> e clique no ícone azul na lateral direita.
+
+Para desenvolver com recarga automática, rode `npm run dev` (porta 5174) e carregue a mesma pasta `dist`. A URL da API vem de `VITE_API_URL` (padrão `http://localhost:8000`, veja `extension/.env.example`); a extensão só recebe permissão de acesso a essa origem. O botão **Conectar Google** abre o consentimento OAuth em uma janela própria, que fecha sozinha quando a API confirma a autorização do Calendar.
+
 ## Testes
 
 Com as dependências de desenvolvimento instaladas:

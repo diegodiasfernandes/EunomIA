@@ -373,7 +373,7 @@ def integration_status() -> dict:
     with connect() as connection:
         row = connection.execute(
             """
-            SELECT account_email
+            SELECT account_email, credentials_json
             FROM integrations
             WHERE name = 'google'
             """
