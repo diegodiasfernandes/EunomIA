@@ -46,6 +46,7 @@ export interface GoogleStatus {
     connected: boolean;
     email: string | null;
     calendar_connected: boolean;
+    tasks_connected: boolean;
 }
 
 export interface Dashboard {

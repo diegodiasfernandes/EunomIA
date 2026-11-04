@@ -20,8 +20,9 @@ function ConnectCard({
     onConnect: () => void;
     connecting: boolean;
 }) {
-    if (!google || google.calendar_connected) return null;
+    if (!google || (google.calendar_connected && google.tasks_connected)) return null;
     const reauthorize = google.connected;
+    const missingTasks = google.calendar_connected && !google.tasks_connected;
 
     return (
         <section className="rounded-card border border-accent/25 bg-accent-soft p-4">
@@ -31,12 +32,18 @@ function ConnectCard({
                 </span>
                 <div className="min-w-0">
                     <h2 className="text-[14px] font-semibold text-ink">
-                        {reauthorize ? "Autorize o Google Calendar" : "Conecte sua conta Google"}
+                        {missingTasks
+                            ? "Autorize o Google Tasks"
+                            : reauthorize
+                              ? "Autorize o Google Calendar e Tasks"
+                              : "Conecte sua conta Google"}
                     </h2>
                     <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-2">
-                        {reauthorize
-                            ? "Sua conta foi conectada antes da permissão do Calendar. Autorize de novo para criar os eventos aprovados."
-                            : "A EunomIA lê seus e-mails para encontrar reuniões e prazos e cria no Calendar só o que você aprovar."}
+                        {missingTasks
+                            ? "Sua conta já tem acesso ao Calendar. Autorize o Google Tasks para criar as tarefas aprovadas."
+                            : reauthorize
+                              ? "Autorize o acesso ao Calendar e ao Tasks para criar as reuniões e tarefas aprovadas."
+                              : "A EunomIA lê seus e-mails para encontrar reuniões e prazos e cria no Google só o que você aprovar."}
                     </p>
                 </div>
             </div>
@@ -49,7 +56,9 @@ function ConnectCard({
                 {connecting
                     ? "Aguardando autorização..."
                     : reauthorize
-                      ? "Autorizar Calendar"
+                      ? missingTasks
+                          ? "Autorizar Google Tasks"
+                          : "Autorizar Calendar e Tasks"
                       : "Conectar Google"}
             </Button>
         </section>

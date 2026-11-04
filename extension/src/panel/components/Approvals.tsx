@@ -21,11 +21,13 @@ import { Avatars, Button, SectionTitle, Skeleton } from "./ui";
 function ApprovalCard({
     item,
     calendarConnected,
+    tasksConnected,
     onOpen,
     onEdit,
 }: {
     item: ApprovalItem;
     calendarConnected: boolean;
+    tasksConnected: boolean;
     onOpen: () => void;
     onEdit: () => void;
 }) {
@@ -76,6 +78,7 @@ function ApprovalCard({
                     item={item}
                     actions={actions}
                     calendarConnected={calendarConnected}
+                    tasksConnected={tasksConnected}
                     onEdit={onEdit}
                 />
             </div>
@@ -175,6 +178,7 @@ export function ApprovalsView({
                             <ApprovalCard
                                 item={item}
                                 calendarConnected={Boolean(google?.calendar_connected)}
+                                tasksConnected={Boolean(google?.tasks_connected)}
                                 onOpen={() => onOpen(item)}
                                 onEdit={() => onEdit(item)}
                             />

@@ -20,6 +20,7 @@ if os.getenv("ENVIRONMENT", "development") == "development":
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 USER_ID = "demo"
@@ -380,19 +381,25 @@ def integration_status() -> dict:
         ).fetchone()
 
     calendar_connected = False
+    tasks_connected = False
     if row:
         try:
             granted_scopes = json.loads(row["credentials_json"]).get("scopes", [])
             calendar_connected = (
                 "https://www.googleapis.com/auth/calendar.events" in granted_scopes
             )
+            tasks_connected = (
+                "https://www.googleapis.com/auth/tasks" in granted_scopes
+            )
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             calendar_connected = False
+            tasks_connected = False
 
     return {
         "connected": bool(row),
         "email": row["account_email"] if row else None,
         "calendar_connected": calendar_connected,
+        "tasks_connected": tasks_connected,
     }
 
 
@@ -435,6 +442,34 @@ def create_calendar_event(
         .execute()
     )
     return event.get("id")
+
+
+def create_google_task(
+    *,
+    title: str,
+    description: str,
+    due_at: datetime | None,
+) -> str | None:
+    """Creates the accepted deadline in the user's default Google Tasks list."""
+    credentials = google_credentials()
+    if credentials is None:
+        return None
+    if not integration_status()["tasks_connected"]:
+        raise ValueError(
+            "Reconecte sua conta Google para autorizar o acesso ao Google Tasks."
+        )
+
+    task_body = {"title": title, "notes": description}
+    if due_at is not None:
+        task_body["due"] = due_at.isoformat()
+
+    task = (
+        build("tasks", "v1", credentials=credentials)
+        .tasks()
+        .insert(tasklist="@default", body=task_body)
+        .execute()
+    )
+    return task.get("id")
 
 
 def _email_body(payload: dict) -> str:

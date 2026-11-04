@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import timedelta, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 TEST_DATABASE = Path(tempfile.gettempdir()) / "eunomia-api-tests.sqlite"
@@ -43,6 +44,7 @@ class GoogleIntegrationApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("connected", response.json())
+        self.assertIn("tasks_connected", response.json())
 
     def test_google_sync_uses_the_selected_email_date_range(self):
         result = {"emails": 8, "email_threads_with_events": 2}
@@ -406,10 +408,11 @@ class GoogleIntegrationApiTests(unittest.TestCase):
                 "due_at": "2030-06-02T14:00:00-03:00",
             },
         )
-        confirmed = self.client.patch(
-            f"/api/tasks/{task_ids['confirmed']}",
-            json={"status": "confirmed"},
-        )
+        with patch("app.main.create_google_task", return_value=None):
+            confirmed = self.client.patch(
+                f"/api/tasks/{task_ids['confirmed']}",
+                json={"status": "confirmed"},
+            )
         cancelled = self.client.patch(
             f"/api/tasks/{task_ids['cancelled']}",
             json={"status": "cancelled"},
@@ -421,6 +424,79 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertEqual(confirmed.json()["status"], "confirmed")
         self.assertEqual(cancelled.status_code, 200)
         self.assertEqual(cancelled.json()["status"], "cancelled")
+
+    def test_confirming_deadline_creates_google_task_and_saves_provider_id(self):
+        task_id = "3b04d8a6-3028-4a44-8dcb-700b13443bf0"
+        from app.db import connect
+
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO tasks(
+                    id, user_id, title, description, due_at, status, source
+                )
+                VALUES (?, 'demo', ?, ?, ?, 'pending', 'manual')
+                """,
+                (
+                    task_id,
+                    "Enviar relatório",
+                    "Finalizar o relatório mensal.",
+                    "2030-06-02T14:00:00-03:00",
+                ),
+            )
+
+        with patch("app.main.create_google_task", return_value="google-task-id") as create:
+            response = self.client.patch(
+                f"/api/tasks/{task_id}",
+                json={"status": "confirmed"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "confirmed")
+        self.assertTrue(response.json()["google_tasks_synced"])
+        create.assert_called_once()
+        self.assertEqual(create.call_args.kwargs["title"], "Enviar relatório")
+        self.assertEqual(
+            create.call_args.kwargs["description"],
+            "Finalizar o relatório mensal.",
+        )
+        with connect() as connection:
+            task = connection.execute(
+                "SELECT provider_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(task["provider_id"], "google-task-id")
+
+    def test_tasks_api_disabled_returns_actionable_error(self):
+        task_id = "408ece17-e8b3-4f51-9bd7-c7c461bf23a8"
+        from app.db import connect
+        from googleapiclient.errors import HttpError
+
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO tasks(id, user_id, title, status, source)
+                VALUES (?, 'demo', 'Enviar relatório', 'pending', 'manual')
+                """,
+                (task_id,),
+            )
+
+        google_error = HttpError(
+            MagicMock(status=403),
+            b'{"error":{"errors":[{"reason":"accessNotConfigured"}]}}',
+        )
+        with patch("app.main.create_google_task", side_effect=google_error):
+            response = self.client.patch(
+                f"/api/tasks/{task_id}",
+                json={"status": "confirmed"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Google Tasks API está desativada", response.json()["detail"])
+        self.assertIn(
+            "https://console.cloud.google.com/apis/library/tasks.googleapis.com",
+            response.json()["detail"],
+        )
 
     def test_editing_detected_email_meeting_keeps_sender_and_review_status(self):
         event_id = "591f4375-7fbc-4b53-a31f-ab728bb9410a"

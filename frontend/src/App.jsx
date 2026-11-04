@@ -334,7 +334,11 @@ function App() {
         body: JSON.stringify({ status }),
       });
       await refresh();
-      setToast(status === "confirmed" ? "Lembrete confirmado." : "Lembrete cancelado.");
+      setToast(status === "confirmed"
+        ? result.google_tasks_synced
+          ? "Tarefa adicionada ao Google Tasks."
+          : "Prazo confirmado localmente. Conecte o Google Tasks para sincronizar os próximos."
+        : "Lembrete cancelado.");
     } catch (error) {
       setPageError(error.message);
     } finally {
@@ -349,6 +353,7 @@ function App() {
   const pendingCount = pendingTasks.length + pendingMeetings.length;
   const googleConnected = dashboard?.google.connected;
   const calendarConnected = dashboard?.google.calendar_connected;
+  const tasksConnected = dashboard?.google.tasks_connected;
   const today = localDateValue(new Date());
 
   return (
@@ -382,12 +387,20 @@ function App() {
         </nav>
         <div className="sidebar-spacer" />
         <section className="connection-card" aria-label="Conexão com Google">
-          <div className={`connection-dot ${calendarConnected ? "connected" : ""}`} />
+          <div className={`connection-dot ${calendarConnected && tasksConnected ? "connected" : ""}`} />
           <div className="connection-copy">
-            <b>{calendarConnected ? "Google Calendar conectado" : googleConnected ? "Autorize o Calendar" : "Conecte sua conta"}</b>
-            <small>{dashboard?.google.email || "Gmail e Calendar"}</small>
+            <b>
+              {calendarConnected && tasksConnected
+                ? "Google Calendar e Tasks conectados"
+                : calendarConnected
+                  ? "Autorize o Google Tasks"
+                  : googleConnected
+                    ? "Autorize o Google Calendar e Tasks"
+                    : "Conecte sua conta"}
+            </b>
+            <small>{dashboard?.google.email || "Gmail, Calendar e Tasks"}</small>
           </div>
-          {!calendarConnected && <button className="connect-link" onClick={connectGoogle}>{googleConnected ? "Autorizar" : "Conectar"}</button>}
+          {!(calendarConnected && tasksConnected) && <button className="connect-link" onClick={connectGoogle}>{googleConnected ? "Autorizar" : "Conectar"}</button>}
         </section>
         <div className="profile"><span className="avatar">D</span><span><b>Diego Dias</b><small>Conta pessoal</small></span></div>
       </aside>
@@ -415,7 +428,7 @@ function App() {
                   <span className="assistant-icon"><Sparkles size={18} /></span>
                   <div><b>EunomIA</b><small>Assistente pessoal</small></div>
                   <span className={`connection-status ${googleConnected ? "connected" : ""}`}>
-                    <i />{calendarConnected ? "Calendar conectado" : "Calendar desconectado"}
+                    <i />{calendarConnected && tasksConnected ? "Google conectado" : "Google desconectado"}
                   </span>
                 </div>
                 <div className="chat-messages" aria-live="polite">

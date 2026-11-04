@@ -50,11 +50,13 @@ export function DetailSheet({
     item,
     startEditing,
     calendarConnected,
+    tasksConnected,
     onClose,
 }: {
     item: ApprovalItem;
     startEditing: boolean;
     calendarConnected: boolean;
+    tasksConnected: boolean;
     onClose: () => void;
 }) {
     const open = isOpenStatus(item.record.status);
@@ -211,6 +213,7 @@ export function DetailSheet({
                                 item={item}
                                 actions={actions}
                                 calendarConnected={calendarConnected}
+                                tasksConnected={tasksConnected}
                                 onEdit={() => setEditing(true)}
                             />
                         </div>

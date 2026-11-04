@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from app.assistant import generate_natural_response, generate_structured_response
 from app.db import connect, initialize_database
 from app.features.conflict_management import identify_conflicts
-from app.google_integration import sync_google
+from app.google_integration import create_google_task, sync_google
 from app.models import MeetingRecord
 from app.mock_data import load_extracted_schedule_mock, load_raw_email_thread_mock
 
@@ -97,6 +97,57 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(build.call_count, 1)
         self.assertEqual(build.call_args.args[:2], ("gmail", "v1"))
         gmail.users.return_value.messages.return_value.list.assert_called_once()
+
+    def test_create_google_task_uses_default_tasks_list_and_deadline(self):
+        tasks = MagicMock()
+        tasks.tasks.return_value.insert.return_value.execute.return_value = {
+            "id": "google-task-id"
+        }
+        due_at = datetime(2030, 6, 2, 14, tzinfo=timezone(timedelta(hours=-3)))
+        credentials = object()
+
+        with (
+            patch("app.google_integration.google_credentials", return_value=credentials),
+            patch(
+                "app.google_integration.integration_status",
+                return_value={"tasks_connected": True},
+            ),
+            patch("app.google_integration.build", return_value=tasks) as build,
+        ):
+            task_id = create_google_task(
+                title="Enviar relatório",
+                description="Finalizar o relatório mensal.",
+                due_at=due_at,
+            )
+
+        self.assertEqual(task_id, "google-task-id")
+        build.assert_called_once_with("tasks", "v1", credentials=credentials)
+        tasks.tasks.return_value.insert.assert_called_once_with(
+            tasklist="@default",
+            body={
+                "title": "Enviar relatório",
+                "notes": "Finalizar o relatório mensal.",
+                "due": due_at.isoformat(),
+            },
+        )
+
+    def test_create_google_task_requires_tasks_scope(self):
+        with (
+            patch("app.google_integration.google_credentials", return_value=object()),
+            patch(
+                "app.google_integration.integration_status",
+                return_value={"tasks_connected": False},
+            ),
+            patch("app.google_integration.build") as build,
+        ):
+            with self.assertRaisesRegex(ValueError, "Google Tasks"):
+                create_google_task(
+                    title="Enviar relatório",
+                    description="",
+                    due_at=None,
+                )
+
+        build.assert_not_called()
 
     def test_rescan_reopens_existing_meetings_in_pending(self):
         with tempfile.TemporaryDirectory() as directory:

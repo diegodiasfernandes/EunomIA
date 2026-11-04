@@ -81,7 +81,7 @@ export function useWorkspace() {
 }
 
 export function useSetStatus(
-    onSuccess: (calendarSynced: boolean, status: "confirmed" | "cancelled") => void,
+    onSuccess: (googleSynced: boolean, status: "confirmed" | "cancelled") => void,
 ) {
     const refresh = useRefreshAll();
     return useMutation({
@@ -96,10 +96,10 @@ export function useSetStatus(
                 const result = await api.setMeetingStatus(item.record.id, status);
                 return Boolean(result.calendar_synced);
             }
-            await api.setTaskStatus(item.record.id, status);
-            return false;
+            const result = await api.setTaskStatus(item.record.id, status);
+            return Boolean(result.google_tasks_synced);
         },
-        onSuccess: (calendarSynced, { status }) => onSuccess(calendarSynced, status),
+        onSuccess: (googleSynced, { status }) => onSuccess(googleSynced, status),
         onSettled: refresh,
     });
 }

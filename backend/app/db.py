@@ -75,6 +75,7 @@ def initialize_database():
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL REFERENCES users(id),
+                provider_id TEXT,
                 event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
                 source_ref TEXT,
                 title TEXT NOT NULL,
@@ -144,6 +145,11 @@ def initialize_database():
                 "ALTER TABLE tasks ADD COLUMN source_ref TEXT"
             )
 
+        if "provider_id" not in task_columns:
+            connection.execute(
+                "ALTER TABLE tasks ADD COLUMN provider_id TEXT"
+            )
+
         if "responsible" not in task_columns:
             connection.execute(
                 "ALTER TABLE tasks ADD COLUMN responsible TEXT"
@@ -185,6 +191,14 @@ def initialize_database():
             CREATE UNIQUE INDEX IF NOT EXISTS
             idx_tasks_source_ref
             ON tasks(user_id, source_ref)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_tasks_provider_id
+            ON tasks(user_id, provider_id)
             """
         )
 

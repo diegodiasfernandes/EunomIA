@@ -21,6 +21,7 @@ from .features.intent_detection import detect_intent
 from .google_integration import (
     begin_oauth,
     create_calendar_event,
+    create_google_task,
     finish_oauth,
     integration_status,
     sync_google,
@@ -440,6 +441,72 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
 
         if request.status is None:
             raise HTTPException(status_code=422, detail="Informe o novo status.")
+        if request.status == "confirmed":
+            task = connection.execute(
+                """
+                SELECT id, title, description, due_at
+                FROM tasks
+                WHERE id = ? AND user_id = 'demo'
+                  AND status IN ('pending', 'detected')
+                """,
+                (str(task_id),),
+            ).fetchone()
+            if task is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Este prazo não pode ser confirmado neste estado.",
+                )
+            try:
+                google_task_id = create_google_task(
+                    title=task["title"],
+                    description=task["description"],
+                    due_at=(
+                        datetime.fromisoformat(task["due_at"])
+                        if task["due_at"]
+                        else None
+                    ),
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except HttpError as error:
+                if (
+                    error.resp.status == 403
+                    and b"accessNotConfigured" in error.content
+                ):
+                    detail = (
+                        "A Google Tasks API está desativada no projeto Google Cloud "
+                        "das credenciais. Habilite-a em "
+                        "https://console.cloud.google.com/apis/library/tasks.googleapis.com "
+                        "no mesmo projeto configurado para o OAuth e tente novamente "
+                        "após a ativação."
+                    )
+                else:
+                    detail = (
+                        "Não foi possível criar a tarefa no Google Tasks: "
+                        f"{error}"
+                    )
+                raise HTTPException(status_code=502, detail=detail) from error
+            except (GoogleAuthError, OSError) as error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Não foi possível criar a tarefa no Google Tasks: {error}",
+                ) from error
+            result = connection.execute(
+                """
+                UPDATE tasks
+                SET status = 'confirmed', provider_id = COALESCE(?, provider_id)
+                WHERE id = ? AND user_id = 'demo'
+                  AND status IN ('pending', 'detected')
+                """,
+                (google_task_id, str(task_id)),
+            )
+            if result.rowcount == 0:
+                raise HTTPException(status_code=409, detail="O prazo foi alterado. Atualize a tela.")
+            return {
+                "id": str(task_id),
+                "status": "confirmed",
+                "google_tasks_synced": bool(google_task_id),
+            }
     with connect() as connection:
         result = connection.execute(
             """

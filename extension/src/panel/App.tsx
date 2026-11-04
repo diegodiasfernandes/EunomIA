@@ -238,6 +238,7 @@ function Panel() {
                         item={liveDetail}
                         startEditing={detail.editing}
                         calendarConnected={Boolean(workspace.google?.calendar_connected)}
+                        tasksConnected={Boolean(workspace.google?.tasks_connected)}
                         onClose={() => setDetail(null)}
                     />
                 )}

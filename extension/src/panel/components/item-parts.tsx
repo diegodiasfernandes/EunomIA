@@ -22,10 +22,13 @@ import { Button, IconButton, cn } from "./ui";
 
 export function useItemActions(item: ApprovalItem, onResolved?: () => void) {
     const toast = useToast();
-    const mutation = useSetStatus((calendarSynced, status) => {
+    const mutation = useSetStatus((googleSynced, status) => {
         if (status === "cancelled") toast("info", "Item descartado.");
-        else if (item.kind === "deadline") toast("ok", "Prazo confirmado.");
-        else if (calendarSynced) toast("ok", "Evento criado no Google Calendar.");
+        else if (item.kind === "deadline" && googleSynced)
+            toast("ok", "Tarefa adicionada ao Google Tasks.");
+        else if (item.kind === "deadline")
+            toast("ok", "Prazo confirmado localmente. Conecte o Google Tasks para sincronizar os próximos.");
+        else if (googleSynced) toast("ok", "Evento criado no Google Calendar.");
         else
             toast(
                 "ok",
@@ -48,16 +51,20 @@ export function ActionBar({
     item,
     actions,
     calendarConnected,
+    tasksConnected,
     onEdit,
 }: {
     item: ApprovalItem;
     actions: ItemActions;
     calendarConnected: boolean;
+    tasksConnected: boolean;
     onEdit: () => void;
 }) {
     const confirmLabel =
         item.kind === "deadline"
-            ? "Confirmar prazo"
+            ? tasksConnected
+                ? "Adicionar ao Google Tasks"
+                : "Confirmar prazo"
             : calendarConnected
               ? "Adicionar ao Calendar"
               : "Confirmar reunião";

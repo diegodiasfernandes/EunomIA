@@ -83,7 +83,11 @@ export const api = {
         status: Extract<RecordStatus, "confirmed" | "cancelled" | "done">,
     ) =>
         http
-            .patch<{ id: string; status: RecordStatus }>(path("/api/tasks", id), { status })
+            .patch<{
+                id: string;
+                status: RecordStatus;
+                google_tasks_synced?: boolean;
+            }>(path("/api/tasks", id), { status })
             .then((r) => r.data),
 
     editMeeting: (id: string, patch: MeetingPatch) =>
