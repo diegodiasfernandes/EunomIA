@@ -103,7 +103,7 @@ class AssistantTests(unittest.TestCase):
         tasks.tasks.return_value.insert.return_value.execute.return_value = {
             "id": "google-task-id"
         }
-        due_at = datetime(2030, 6, 2, 14, tzinfo=timezone(timedelta(hours=-3)))
+        due_at = datetime(2030, 6, 2, 23, 59, tzinfo=timezone(timedelta(hours=-3)))
         credentials = object()
 
         with (
@@ -127,7 +127,7 @@ class AssistantTests(unittest.TestCase):
             body={
                 "title": "Enviar relatório",
                 "notes": "Finalizar o relatório mensal.",
-                "due": due_at.isoformat(),
+                "due": "2030-06-02T00:00:00Z",
             },
         )
 

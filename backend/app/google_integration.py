@@ -461,7 +461,13 @@ def create_google_task(
 
     task_body = {"title": title, "notes": description}
     if due_at is not None:
-        task_body["due"] = due_at.isoformat()
+        # Google Tasks keeps only the UTC date; normalize to midnight to avoid
+        # rolling a local end-of-day deadline into the following UTC date.
+        task_body["due"] = (
+            datetime.combine(due_at.date(), datetime.min.time(), tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
     task = (
         build("tasks", "v1", credentials=credentials)
