@@ -8,6 +8,7 @@ import type {
     SyncRange,
     SyncResult,
     Task,
+    TaskHistory,
     TaskPatch,
 } from "./types";
 
@@ -68,6 +69,9 @@ export const api = {
     dashboard: () => http.get<Dashboard>("/api/dashboard").then((r) => r.data),
 
     events: () => http.get<{ events: Meeting[] }>("/api/events").then((r) => r.data.events),
+
+    taskHistory: () =>
+        http.get<{ tasks: TaskHistory[] }>("/api/tasks/history").then((r) => r.data.tasks),
 
     setMeetingStatus: (id: string, status: Extract<RecordStatus, "confirmed" | "cancelled">) =>
         http

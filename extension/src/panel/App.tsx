@@ -163,7 +163,7 @@ function Panel() {
                 conflicts={workspace.conflicts}
                 history={workspace.history}
                 loading={workspace.isLoading}
-                onOpen={openMeeting}
+                onOpen={(item) => openItem(item)}
             />
         );
     } else {

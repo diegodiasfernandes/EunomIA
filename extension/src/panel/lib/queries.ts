@@ -2,11 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { api } from "./api";
 import { isOpenStatus, itemDate, meetingEnd } from "./format";
-import type { ApprovalItem, MeetingPatch, SyncRange, TaskPatch } from "./types";
+import type {
+    ApprovalItem,
+    MeetingPatch,
+    SyncRange,
+    TaskHistory,
+    TaskPatch,
+} from "./types";
 
 export const queryKeys = {
     dashboard: ["dashboard"] as const,
     events: ["events"] as const,
+    taskHistory: ["task-history"] as const,
 };
 
 const POLL_MS = 60_000;
@@ -19,12 +26,21 @@ export function useEvents() {
     return useQuery({ queryKey: queryKeys.events, queryFn: api.events, refetchInterval: POLL_MS });
 }
 
+export function useTaskHistory() {
+    return useQuery({
+        queryKey: queryKeys.taskHistory,
+        queryFn: api.taskHistory,
+        refetchInterval: POLL_MS,
+    });
+}
+
 function useRefreshAll() {
     const client = useQueryClient();
     return () =>
         Promise.all([
             client.invalidateQueries({ queryKey: queryKeys.dashboard }),
             client.invalidateQueries({ queryKey: queryKeys.events }),
+            client.invalidateQueries({ queryKey: queryKeys.taskHistory }),
         ]);
 }
 
@@ -37,6 +53,7 @@ const byDateAsc = (a: string | null, b: string | null) => {
 export function useWorkspace() {
     const dashboard = useDashboard();
     const events = useEvents();
+    const taskHistory = useTaskHistory();
 
     const derived = useMemo(() => {
         const meetings = events.data ?? [];
@@ -57,26 +74,40 @@ export function useWorkspace() {
             .filter((m) => meetingEnd(m).getTime() >= now)
             .sort((a, b) => byDateAsc(a.starts_at, b.starts_at));
         const conflicts = active.filter((m) => m.conflict);
-        const history = meetings
+        const history: ApprovalItem[] = meetings
             .filter(
                 (m) =>
                     !isOpenStatus(m.status) &&
                     (m.status !== "confirmed" || m.calendar_synced),
             )
-            .sort((a, b) => byDateAsc(b.starts_at, a.starts_at));
+            .map((record) => ({ kind: "meeting" as const, record }));
+        history.push(
+            ...(taskHistory.data ?? [])
+                .filter(
+                    (task: TaskHistory) =>
+                        !isOpenStatus(task.status) &&
+                        (task.status !== "confirmed" || task.google_tasks_synced),
+                )
+                .map((record) => ({ kind: "deadline" as const, record })),
+        );
+        history.sort((a, b) => byDateAsc(itemDate(b), itemDate(a)));
 
         return { approvals, upcoming, conflicts, history };
-    }, [dashboard.data, events.data]);
+    }, [dashboard.data, events.data, taskHistory.data]);
 
     return {
         google: dashboard.data?.google,
         meetings: events.data ?? [],
         ...derived,
-        isLoading: dashboard.isPending || events.isPending,
-        isFetching: dashboard.isFetching || events.isFetching,
-        hasData: dashboard.data !== undefined && events.data !== undefined,
-        error: dashboard.error ?? events.error,
-        refetch: () => Promise.all([dashboard.refetch(), events.refetch()]),
+        isLoading: dashboard.isPending || events.isPending || taskHistory.isPending,
+        isFetching: dashboard.isFetching || events.isFetching || taskHistory.isFetching,
+        hasData:
+            dashboard.data !== undefined &&
+            events.data !== undefined &&
+            taskHistory.data !== undefined,
+        error: dashboard.error ?? events.error ?? taskHistory.error,
+        refetch: () =>
+            Promise.all([dashboard.refetch(), events.refetch(), taskHistory.refetch()]),
     };
 }
 

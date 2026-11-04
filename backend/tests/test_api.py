@@ -466,6 +466,13 @@ class GoogleIntegrationApiTests(unittest.TestCase):
                 (task_id,),
             ).fetchone()
         self.assertEqual(task["provider_id"], "google-task-id")
+        history = self.client.get("/api/tasks/history")
+        self.assertEqual(history.status_code, 200)
+        task_history = next(
+            item for item in history.json()["tasks"] if item["id"] == task_id
+        )
+        self.assertEqual(task_history["status"], "confirmed")
+        self.assertTrue(task_history["google_tasks_synced"])
 
     def test_tasks_api_disabled_returns_actionable_error(self):
         task_id = "408ece17-e8b3-4f51-9bd7-c7c461bf23a8"

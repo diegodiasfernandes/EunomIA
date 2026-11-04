@@ -1,4 +1,4 @@
-import { CalendarBlankIcon, WarningIcon } from "@phosphor-icons/react";
+import { CalendarBlankIcon, FlagIcon, WarningIcon } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { useMemo } from "react";
 import {
@@ -7,18 +7,19 @@ import {
     formatDuration,
     formatTime,
     isOpenStatus,
+    itemDate,
     meetingMinutes,
     STATUS_LABEL,
 } from "../lib/format";
-import type { Meeting } from "../lib/types";
+import type { ApprovalItem, Meeting, RecordStatus, Task } from "../lib/types";
 import { ConflictNote } from "./item-parts";
 import { Pill, Skeleton, cn, type Tone } from "./ui";
 
 export type AgendaFilter = "upcoming" | "conflicts" | "history";
 
-function statusTone(meeting: Meeting): Tone {
-    if (isOpenStatus(meeting.status)) return "accent";
-    if (meeting.status === "confirmed") return "ok";
+function statusTone(status: RecordStatus): Tone {
+    if (isOpenStatus(status)) return "accent";
+    if (status === "confirmed") return "ok";
     return "muted";
 }
 
@@ -71,7 +72,7 @@ export function MeetingRow({ meeting, onOpen }: { meeting: Meeting; onOpen: () =
                         : meeting.location || "Sem local definido"}
                 </span>
             </span>
-            <Pill tone={statusTone(meeting)}>{shortStatus(meeting)}</Pill>
+            <Pill tone={statusTone(meeting.status)}>{shortStatus(meeting)}</Pill>
         </button>
     );
 }
@@ -85,6 +86,51 @@ function groupByDay(meetings: Meeting[]) {
         groups.set(key, group);
     }
     return [...groups.values()];
+}
+
+function groupHistoryByDay(items: ApprovalItem[]) {
+    const groups = new Map<string, { label: string; items: ApprovalItem[] }>();
+    for (const item of items) {
+        const date = itemDate(item);
+        const key = date ? dayKey(date) : "without-date";
+        const group = groups.get(key) ?? {
+            label: date ? dayLabel(date) : "Sem data definida",
+            items: [],
+        };
+        group.items.push(item);
+        groups.set(key, group);
+    }
+    return [...groups.values()];
+}
+
+function DeadlineHistoryRow({ task, onOpen }: { task: Task; onOpen: () => void }) {
+    const muted = task.status === "cancelled" || task.status === "rejected";
+    return (
+        <button
+            type="button"
+            onClick={onOpen}
+            className="group relative flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors hover:bg-sunken/60"
+        >
+            <span className="grid w-11 shrink-0 place-items-center pt-0.5 text-ink-3">
+                <FlagIcon size={17} weight="bold" />
+            </span>
+            <span className="min-w-0 flex-1">
+                <span
+                    className={cn(
+                        "block truncate text-[13.5px] font-medium group-hover:text-accent-ink",
+                        muted ? "text-ink-3 line-through decoration-ink-3/50" : "text-ink",
+                    )}
+                >
+                    {task.title}
+                </span>
+                <span className="block truncate text-[12px] text-ink-3">
+                    {task.deadline_reference ||
+                        (task.responsible ? `Responsável: ${task.responsible}` : "Tarefa")}
+                </span>
+            </span>
+            <Pill tone={statusTone(task.status)}>{STATUS_LABEL[task.status]}</Pill>
+        </button>
+    );
 }
 
 const EMPTY: Record<AgendaFilter, { title: string; body: string }> = {
@@ -115,12 +161,23 @@ export function AgendaView({
     onFilter: (filter: AgendaFilter) => void;
     upcoming: Meeting[];
     conflicts: Meeting[];
-    history: Meeting[];
+    history: ApprovalItem[];
     loading: boolean;
-    onOpen: (meeting: Meeting) => void;
+    onOpen: (item: ApprovalItem) => void;
 }) {
-    const list = filter === "upcoming" ? upcoming : filter === "conflicts" ? conflicts : history;
-    const groups = useMemo(() => groupByDay(list), [list]);
+    const groups = useMemo(
+        () =>
+            filter === "history"
+                ? groupHistoryByDay(history)
+                : groupByDay(filter === "upcoming" ? upcoming : conflicts).map((group) => ({
+                      ...group,
+                      items: group.items.map((record) => ({
+                          kind: "meeting" as const,
+                          record,
+                      })),
+                  })),
+        [filter, history, upcoming, conflicts],
+    );
 
     const filters: { id: AgendaFilter; label: string; count?: number }[] = [
         { id: "upcoming", label: "Próximos" },
@@ -191,7 +248,10 @@ export function AgendaView({
                             key={meeting.id}
                             className="overflow-hidden rounded-card border border-line bg-surface shadow-card"
                         >
-                            <MeetingRow meeting={meeting} onOpen={() => onOpen(meeting)} />
+                            <MeetingRow
+                                meeting={meeting}
+                                onOpen={() => onOpen({ kind: "meeting", record: meeting })}
+                            />
                             <ConflictNote meeting={meeting} className="mx-3 mb-3" />
                         </li>
                     ))}
@@ -204,13 +264,24 @@ export function AgendaView({
                                 {group.label}
                             </h3>
                             <div className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card">
-                                {group.items.map((meeting) => (
-                                    <MeetingRow
-                                        key={meeting.id}
-                                        meeting={meeting}
-                                        onOpen={() => onOpen(meeting)}
-                                    />
-                                ))}
+                                {group.items.map((item) => {
+                                    if (item.kind === "meeting") {
+                                        return (
+                                            <MeetingRow
+                                                key={`meeting:${item.record.id}`}
+                                                meeting={item.record}
+                                                onOpen={() => onOpen(item)}
+                                            />
+                                        );
+                                    }
+                                    return (
+                                        <DeadlineHistoryRow
+                                            key={`deadline:${item.record.id}`}
+                                            task={item.record}
+                                            onOpen={() => onOpen(item)}
+                                        />
+                                    );
+                                })}
                             </div>
                         </section>
                     ))}

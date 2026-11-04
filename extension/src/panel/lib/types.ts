@@ -42,6 +42,10 @@ export interface Task {
     source: RecordSource;
 }
 
+export interface TaskHistory extends Task {
+    google_tasks_synced: boolean;
+}
+
 export interface GoogleStatus {
     connected: boolean;
     email: string | null;

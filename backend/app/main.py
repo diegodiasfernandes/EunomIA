@@ -134,6 +134,38 @@ def dashboard():
     }
 
 
+@app.get("/api/tasks/history")
+def task_history():
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, title, description, responsible, due_at,
+                   deadline_reference, inferred_fields, sender, status, source,
+                   provider_id
+            FROM tasks
+            WHERE user_id = 'demo'
+              AND status NOT IN ('pending', 'detected')
+              AND (status != 'confirmed' OR provider_id IS NOT NULL)
+            ORDER BY due_at
+            """
+        ).fetchall()
+
+    return {
+        "tasks": [
+            {
+                **{
+                    key: value
+                    for key, value in dict(row).items()
+                    if key != "provider_id"
+                },
+                "google_tasks_synced": bool(row["provider_id"]),
+                "inferred_fields": json.loads(row["inferred_fields"] or "[]"),
+            }
+            for row in rows
+        ]
+    }
+
+
 @app.get("/api/events")
 def events():
     with connect() as connection:
