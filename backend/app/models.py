@@ -25,6 +25,7 @@ class MeetingRecord(BaseModel):
     sender: str = ""
     link: str | None = None
     participants: list[str] = Field(default_factory=list)
+    calendar_synced: bool = False
     inferred_fields: list[str] = Field(default_factory=list)
     conflict: bool = False
     conflicts_with: list[MeetingConflict] = Field(default_factory=list)

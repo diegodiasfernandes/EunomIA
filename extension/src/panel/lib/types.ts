@@ -23,6 +23,7 @@ export interface Meeting {
     sender: string;
     link: string | null;
     participants: string[];
+    calendar_synced: boolean;
     inferred_fields: string[];
     conflict: boolean;
     conflicts_with: MeetingConflict[];

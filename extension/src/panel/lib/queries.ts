@@ -61,7 +61,7 @@ export function useWorkspace() {
             .filter(
                 (m) =>
                     !isOpenStatus(m.status) &&
-                    (m.status !== "confirmed" || meetingEnd(m).getTime() < now),
+                    (m.status !== "confirmed" || m.calendar_synced),
             )
             .sort((a, b) => byDateAsc(b.starts_at, a.starts_at));
 

@@ -39,6 +39,12 @@ def connect():
 
 def initialize_database():
     with connect() as connection:
+        is_new_database = (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+            ).fetchone()
+            is None
+        )
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -198,7 +204,7 @@ def initialize_database():
             ),
         )
 
-        if connection.execute(
+        if is_new_database and connection.execute(
             "SELECT COUNT(*) FROM events"
         ).fetchone()[0] == 0:
             _seed_demo_data(connection)

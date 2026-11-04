@@ -267,10 +267,11 @@ class GoogleIntegrationApiTests(unittest.TestCase):
                 "ends_at": "2030-06-02T15:00:00-03:00",
             },
         )
-        confirmed = self.client.patch(
-            f"/api/events/{event_ids['confirmed']}",
-            json={"status": "confirmed"},
-        )
+        with patch("app.main.create_calendar_event", return_value="google-event-id"):
+            confirmed = self.client.patch(
+                f"/api/events/{event_ids['confirmed']}",
+                json={"status": "confirmed"},
+            )
         cancelled = self.client.patch(
             f"/api/events/{event_ids['cancelled']}",
             json={"status": "cancelled"},
@@ -282,6 +283,47 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         self.assertEqual(confirmed.json()["status"], "confirmed")
         self.assertEqual(cancelled.status_code, 200)
         self.assertEqual(cancelled.json()["status"], "cancelled")
+        meeting = next(
+            item
+            for item in self.client.get("/api/events").json()["events"]
+            if item["id"] == event_ids["confirmed"]
+        )
+        self.assertTrue(meeting["calendar_synced"])
+
+    def test_confirmed_meeting_without_calendar_sync_is_not_marked_synced(self):
+        event_id = "b1f94185-d280-43a8-9b26-62c48c7f4003"
+        from app.db import connect
+
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO events(
+                    id, user_id, title, starts_at, ends_at, status, source,
+                    updated_at
+                )
+                VALUES (?, 'demo', 'Reunião sem Calendar', ?, ?, 'pending', 'manual', ?)
+                """,
+                (
+                    event_id,
+                    "2030-07-01T10:00:00-03:00",
+                    "2030-07-01T11:00:00-03:00",
+                    "2030-06-01T00:00:00-03:00",
+                ),
+            )
+
+        with patch("app.main.create_calendar_event", return_value=None):
+            confirmed = self.client.patch(
+                f"/api/events/{event_id}",
+                json={"status": "confirmed"},
+            )
+
+        self.assertEqual(confirmed.status_code, 200)
+        meeting = next(
+            item
+            for item in self.client.get("/api/events").json()["events"]
+            if item["id"] == event_id
+        )
+        self.assertFalse(meeting["calendar_synced"])
 
     def test_reviewing_email_deadline_accepts_to_pending_or_rejects(self):
         task_ids = {

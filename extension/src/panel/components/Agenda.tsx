@@ -98,7 +98,7 @@ const EMPTY: Record<AgendaFilter, { title: string; body: string }> = {
     },
     history: {
         title: "Histórico vazio",
-        body: "Reuniões passadas e itens descartados ficam guardados aqui.",
+        body: "Reuniões confirmadas, passadas ou descartadas ficam guardadas aqui.",
     },
 };
 

@@ -139,7 +139,7 @@ def events():
         rows = connection.execute(
             """
             SELECT id, title, description, starts_at, ends_at, location,
-                   sender, status, source, inferred_fields
+                   sender, status, source, provider_id, inferred_fields
             FROM events
             WHERE user_id = 'demo'
             ORDER BY starts_at
@@ -157,6 +157,7 @@ def events():
             sender=row["sender"] or "",
             status=row["status"],
             source=row["source"],
+            calendar_synced=bool(row["provider_id"]),
             inferred_fields=json.loads(row["inferred_fields"] or "[]"),
         )
         for row in rows
