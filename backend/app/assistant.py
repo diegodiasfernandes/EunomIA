@@ -1,7 +1,35 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.request
+
+
+class GeminiUnavailableError(RuntimeError):
+    """Temporary provider failure after bounded retries."""
+
+
+def _request_payload(request: urllib.request.Request) -> dict:
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            status = error.code
+            error.close()
+            if status in {500, 502, 503, 504}:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise GeminiUnavailableError(
+                    "O serviço de análise de e-mails está temporariamente indisponível. "
+                    "Tentamos novamente automaticamente, mas o Gemini continua ocupado. "
+                    "Aguarde alguns instantes e inicie a varredura novamente."
+                ) from None
+            raise RuntimeError(
+                f"Não foi possível consultar o Gemini (HTTP {status}). "
+                "Verifique a chave, as permissões e os limites da API."
+            ) from None
 
 
 def generate_natural_response(prompt: str) -> str:
@@ -22,15 +50,8 @@ def generate_natural_response(prompt: str) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = _request_payload(request)
         text = payload["candidates"][0]["content"]["parts"][0]["text"]
-    
-    except urllib.error.HTTPError as error:
-        details = error.read().decode("utf-8")
-        raise RuntimeError(
-            f"Erro HTTP {error.code} do Gemini: \n {details}"
-        ) from error
     
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"Não foi possível consultar o Gemini: {error}") from error
@@ -71,15 +92,9 @@ def generate_structured_response(prompt: str, response_structure: dict) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = _request_payload(request)
         generated = payload["candidates"][0]["content"]["parts"][0]["text"]
         result = json.loads(generated)
-    except urllib.error.HTTPError as error:
-        details = error.read().decode("utf-8")
-        raise RuntimeError(
-            f"Erro HTTP {error.code} do Gemini:\n{details}"
-        ) from error
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"Não foi possível consultar o Gemini: {error}") from error
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:

@@ -1,5 +1,6 @@
 import axios, { isAxiosError } from "axios";
 import type {
+    AgendaPage,
     ChatResponse,
     Dashboard,
     Meeting,
@@ -66,6 +67,9 @@ http.interceptors.response.use(
 const path = (base: string, id: string) => `${base}/${encodeURIComponent(id)}`;
 
 export const api = {
+    agenda: (from: string | null) =>
+        http.get<AgendaPage>("/api/agenda", { params: from ? { from_date: from } : {}, timeout: 90_000 })
+            .then((r) => r.data),
     dashboard: () => http.get<Dashboard>("/api/dashboard").then((r) => r.data),
 
     events: () => http.get<{ events: Meeting[] }>("/api/events").then((r) => r.data.events),

@@ -20,6 +20,7 @@ if os.getenv("ENVIRONMENT", "development") == "development":
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     "https://www.googleapis.com/auth/tasks",
 ]
 
@@ -349,7 +350,6 @@ def google_credentials() -> Credentials | None:
 
     credentials = Credentials.from_authorized_user_info(
         json.loads(row["credentials_json"]),
-        SCOPES,
     )
 
     if credentials.expired and credentials.refresh_token:
@@ -380,6 +380,7 @@ def integration_status() -> dict:
             """
         ).fetchone()
 
+    granted_scopes = []
     calendar_connected = False
     tasks_connected = False
     if row:
@@ -399,6 +400,7 @@ def integration_status() -> dict:
         "connected": bool(row),
         "email": row["account_email"] if row else None,
         "calendar_connected": calendar_connected,
+        "agenda_connected": calendar_connected and bool(row) and "https://www.googleapis.com/auth/calendar.calendarlist.readonly" in granted_scopes,
         "tasks_connected": tasks_connected,
     }
 

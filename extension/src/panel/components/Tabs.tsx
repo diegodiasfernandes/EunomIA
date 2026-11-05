@@ -15,12 +15,10 @@ export function Tabs({
     value,
     onChange,
     approvals,
-    conflicts,
 }: {
     value: TabId;
     onChange: (tab: TabId) => void;
     approvals: number;
-    conflicts: number;
 }) {
     function onKeyDown(event: KeyboardEvent) {
         if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
@@ -41,7 +39,7 @@ export function Tabs({
             {TABS.map((tab) => {
                 const active = tab.id === value;
                 const count =
-                    tab.id === "approvals" ? approvals : tab.id === "agenda" ? conflicts : 0;
+                    tab.id === "approvals" ? approvals : 0;
                 return (
                     <button
                         key={tab.id}
@@ -66,14 +64,10 @@ export function Tabs({
                                 transition={{ type: "spring", stiffness: 500, damping: 24 }}
                                 className={cn(
                                     "grid h-4.5 min-w-4.5 place-items-center rounded-full px-1 text-[11px] font-semibold tabular-nums",
-                                    tab.id === "agenda"
-                                        ? "bg-warn-soft text-warn"
-                                        : "bg-accent text-on-accent",
+                                    "bg-accent text-on-accent",
                                 )}
                                 aria-label={
-                                    tab.id === "agenda"
-                                        ? `${count} conflitos`
-                                        : `${count} pendentes`
+                                    `${count} pendentes`
                                 }
                             >
                                 {count}

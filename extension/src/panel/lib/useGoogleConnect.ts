@@ -8,7 +8,8 @@ export function useGoogleConnect(onConnected: () => void) {
     const connecting = windowId !== null;
     const { data } = useDashboard(connecting ? 2_500 : undefined);
     const googleReady =
-        Boolean(data?.google.calendar_connected) && Boolean(data?.google.tasks_connected);
+        Boolean(data?.google.calendar_connected) && Boolean(data?.google.tasks_connected) &&
+        Boolean(data?.google.agenda_connected);
     const handleConnected = useEffectEvent(onConnected);
 
     useEffect(() => {

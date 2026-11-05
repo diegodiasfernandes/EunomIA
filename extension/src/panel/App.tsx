@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { AgendaView, type AgendaFilter } from "./components/Agenda";
+import { CalendarAgenda } from "./components/CalendarAgenda";
 import { ApiErrorState } from "./components/ApiErrorState";
-import { ApprovalsView } from "./components/Approvals";
+import { ApprovalsView, type ApprovalFilter } from "./components/Approvals";
 import { Composer } from "./components/Composer";
 import { ConversationView } from "./components/Conversation";
 import { DetailSheet } from "./components/DetailSheet";
@@ -40,7 +40,7 @@ function Panel() {
     );
 
     const [tab, setTab] = useState<TabId>("overview");
-    const [agendaFilter, setAgendaFilter] = useState<AgendaFilter>("upcoming");
+    const [approvalFilter, setApprovalFilter] = useState<ApprovalFilter>("pending");
     const [detail, setDetail] = useState<{ item: ApprovalItem; editing: boolean } | null>(null);
     const [scanOpen, setScanOpen] = useState(false);
     const [lastSync, setLastSync] = useState<SyncResult | null>(null);
@@ -90,6 +90,7 @@ function Panel() {
                 setLastSync(result);
                 setScanOpen(false);
                 if (result.pending_items > 0) {
+                    setApprovalFilter("pending");
                     setTab("approvals");
                     toast(
                         "ok",
@@ -132,10 +133,10 @@ function Panel() {
                 connecting={google.connecting}
                 onConnect={google.connect}
                 onScan={() => setScanOpen(true)}
-                onReview={() => setTab("approvals")}
+                onReview={() => { setApprovalFilter("pending"); setTab("approvals"); }}
                 onConflicts={() => {
-                    setAgendaFilter("conflicts");
-                    setTab("agenda");
+                    setApprovalFilter("conflicts");
+                    setTab("approvals");
                 }}
                 onAgenda={() => setTab("agenda")}
                 onOpenMeeting={openMeeting}
@@ -144,6 +145,10 @@ function Panel() {
     } else if (tab === "approvals") {
         view = (
             <ApprovalsView
+                filter={approvalFilter}
+                onFilter={setApprovalFilter}
+                conflicts={workspace.conflicts}
+                history={workspace.history}
                 items={workspace.approvals}
                 google={workspace.google}
                 loading={workspace.isLoading}
@@ -156,14 +161,10 @@ function Panel() {
         );
     } else if (tab === "agenda") {
         view = (
-            <AgendaView
-                filter={agendaFilter}
-                onFilter={setAgendaFilter}
-                upcoming={workspace.upcoming}
-                conflicts={workspace.conflicts}
-                history={workspace.history}
-                loading={workspace.isLoading}
-                onOpen={(item) => openItem(item)}
+            <CalendarAgenda
+                google={workspace.google}
+                connecting={google.connecting}
+                onConnect={google.connect}
             />
         );
     } else {
@@ -172,7 +173,7 @@ function Panel() {
                 messages={chat.messages}
                 thinking={chat.thinking}
                 onDraftState={chat.setDraftState}
-                onReview={() => setTab("approvals")}
+                onReview={() => { setApprovalFilter("pending"); setTab("approvals"); }}
                 onSuggestion={(text) => {
                     setDraft(text);
                     composerRef.current?.focus();
@@ -192,7 +193,6 @@ function Panel() {
                 value={tab}
                 onChange={setTab}
                 approvals={pendingCount}
-                conflicts={workspace.conflicts.length}
             />
 
             <main

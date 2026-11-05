@@ -55,6 +55,32 @@ export interface GoogleStatus {
     email: string | null;
     calendar_connected: boolean;
     tasks_connected: boolean;
+    agenda_connected?: boolean;
+}
+
+export interface CalendarEvent {
+    id: string;
+    google_event_id: string;
+    local_id: string | null;
+    origin: "google" | "eunomia";
+    title: string;
+    description: string;
+    starts_at: string;
+    ends_at: string;
+    all_day: boolean;
+    duration_minutes: number;
+    location: string;
+    calendar_id: string;
+    calendar_name: string;
+    time_zone: string;
+    url: string | null;
+}
+
+export interface AgendaPage {
+    events: CalendarEvent[];
+    from_date: string;
+    next_from: string;
+    warnings: string[];
 }
 
 export interface Dashboard {

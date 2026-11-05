@@ -14,7 +14,8 @@ from google.auth.exceptions import GoogleAuthError
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
-from .assistant import generate_natural_response
+from .calendar_agenda import AgendaAuthorizationError, list_agenda
+from .assistant import GeminiUnavailableError, generate_natural_response
 from .db import connect, initialize_database
 from .features.conflict_management import identify_conflicts
 from .features.intent_detection import detect_intent
@@ -972,6 +973,10 @@ def google_sync(request: GoogleSyncRequest | None = None):
         raise HTTPException(status_code=422, detail="A data final não pode ser futura.")
     try:
         result = sync_google(request.email_since, request.email_until)
+    except GeminiUnavailableError as error:
+        raise HTTPException(
+            status_code=503, detail=str(error), headers={"Retry-After": "30"}
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except LookupError as error:
@@ -985,3 +990,16 @@ def google_sync(request: GoogleSyncRequest | None = None):
             detail=f"Falha ao sincronizar com o Google: {error}",
         ) from error
     return {"result": result}
+
+
+@app.get("/api/agenda")
+def agenda(from_date: date | None = None):
+    try:
+        return list_agenda(from_date)
+    except AgendaAuthorizationError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except (HttpError, GoogleAuthError, OSError) as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Não foi possível atualizar a agenda do Google. Tente novamente em instantes; seus registros locais foram preservados.",
+        ) from error

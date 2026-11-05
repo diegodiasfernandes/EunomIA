@@ -40,6 +40,7 @@ function useRefreshAll() {
         Promise.all([
             client.invalidateQueries({ queryKey: queryKeys.dashboard }),
             client.invalidateQueries({ queryKey: queryKeys.events }),
+            client.invalidateQueries({ queryKey: ["calendar-agenda"] }),
             client.invalidateQueries({ queryKey: queryKeys.taskHistory }),
         ]);
 }

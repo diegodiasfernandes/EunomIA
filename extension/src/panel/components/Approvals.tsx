@@ -1,13 +1,18 @@
 import {
     CalendarPlusIcon,
+    ChecksIcon,
+    CalendarXIcon,
+    ClockCounterClockwiseIcon,
     CheckCircleIcon,
     EnvelopeSimpleIcon,
     FlagIcon,
     GoogleLogoIcon,
 } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
+import type { ComponentProps } from "react";
+import { AgendaRecords } from "./Agenda";
 import { parseSenders, plural, sourceLabel } from "../lib/format";
-import type { ApprovalItem, GoogleStatus } from "../lib/types";
+import type { ApprovalItem, GoogleStatus, Meeting } from "../lib/types";
 import {
     ActionBar,
     Assumptions,
@@ -16,7 +21,7 @@ import {
     senderSummary,
     useItemActions,
 } from "./item-parts";
-import { Avatars, Button, SectionTitle, Skeleton } from "./ui";
+import { Avatars, Button, SectionTitle, Skeleton, cn } from "./ui";
 
 function ApprovalCard({
     item,
@@ -92,7 +97,7 @@ function ApprovalCard({
     );
 }
 
-export function ApprovalsView({
+function PendingApprovalsView({
     items,
     google,
     loading,
@@ -192,6 +197,56 @@ export function ApprovalsView({
                     ))}
                 </AnimatePresence>
             </ul>
+        </div>
+    );
+}
+
+export type ApprovalFilter = "pending" | "conflicts" | "history";
+
+type ApprovalsProps = ComponentProps<typeof PendingApprovalsView> & {
+    filter: ApprovalFilter;
+    onFilter: (filter: ApprovalFilter) => void;
+    conflicts: Meeting[];
+    history: ApprovalItem[];
+};
+
+export function ApprovalsView({ filter, onFilter, conflicts, history, ...pending }: ApprovalsProps) {
+    const filters = [
+        { id: "pending", label: "Pendências", icon: ChecksIcon, count: pending.items.length },
+        { id: "conflicts", label: "Conflitos", icon: CalendarXIcon, count: conflicts.length },
+        { id: "history", label: "Histórico", icon: ClockCounterClockwiseIcon, count: 0 },
+    ] as const;
+
+    return (
+        <div>
+            <div role="group" aria-label="Filtrar aprovações" className="flex gap-1.5 px-3 pt-3">
+                {filters.map(({ id, label, icon: Icon, count }) => (
+                    <button
+                        key={id}
+                        type="button"
+                        aria-pressed={filter === id}
+                        onClick={() => onFilter(id)}
+                        className={cn(
+                            "inline-flex min-h-8 flex-1 flex-wrap items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12px] font-medium transition-colors",
+                            filter === id ? "bg-ink text-surface" : "bg-surface text-ink-2 ring-1 ring-line hover:text-ink",
+                        )}
+                    >
+                        <Icon size={16} aria-hidden />
+                        <span>{label}</span>
+                        {count > 0 && <span className="tabular-nums">{count}</span>}
+                    </button>
+                ))}
+            </div>
+            {filter === "pending" ? <PendingApprovalsView {...pending} /> : (
+                <AgendaRecords
+                    filter={filter}
+                    upcoming={[]}
+                    conflicts={conflicts}
+                    history={history}
+                    loading={pending.loading}
+                    onOpen={pending.onOpen}
+                />
+            )}
         </div>
     );
 }

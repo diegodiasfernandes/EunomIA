@@ -113,6 +113,18 @@ python -m unittest discover -s tests -v
 
 O consentimento solicita leitura do Gmail e permissões para criar eventos no Google Calendar e tarefas no Google Tasks. O token OAuth é armazenado no SQLite local; mantenha o arquivo do banco fora do controle de versão.
 
+## Agenda da extensão
+
+A aba Agenda consulta `GET /api/agenda` no backend, que usa `calendarList.list` e `events.list` do Google Calendar. A consulta é somente leitura: não cria, altera ou importa eventos para as pendências locais. Aprovações e seu histórico continuam usando os endpoints locais existentes.
+
+Além da permissão de eventos já utilizada, a conexão solicita `https://www.googleapis.com/auth/calendar.calendarlist.readonly` para listar os calendários acessíveis. Após atualizar e reiniciar o backend, reconecte o Google na extensão para conceder essa permissão. Não é necessário trocar as credenciais OAuth.
+
+A listagem começa à meia-noite de hoje no fuso `America/Sao_Paulo` e consulta períodos de 90 dias. O botão **Ver próximos 90 dias** carrega o período seguinte (`GET /api/agenda?from_date=AAAA-MM-DD`). Todas as páginas de calendários e eventos são percorridas em cada período; instâncias recorrentes são expandidas pelo Google. O botão **Atualizar agenda** consulta novamente os períodos carregados.
+
+Calendários especiais de feriados e aniversários dos contatos são omitidos por seus identificadores do Google. Eventos do tipo `birthday` também são omitidos, inclusive no calendário principal. Os calendários pessoais e compartilhados, eventos normais e eventos da EunomIA são preservados; tarefas e aprovações mantêm seu funcionamento. O filtro afeta somente a exibição na EunomIA, sem excluir calendários ou eventos no Google.
+
+Somente eventos reais, não cancelados ou recusados, são exibidos. O ID do Google vincula os eventos do calendário principal aos registros locais já aprovados, inclusive instâncias recorrentes; esses recebem **Confirmado**. Eventos externos recebem **Google**. Alterações feitas no Google são refletidas pela leitura seguinte, sem sobrescrever propostas pendentes. Eventos de dia inteiro preservam suas datas; o término retornado pelo Google é exclusivo e a interface mostra o último dia incluído. Sem conexão, a extensão pede autorização e não apresenta dados demonstrativos.
+
 ## Gemini
 
 Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das threads importadas do Gmail e habilitar respostas do assistente. `app.assistant` oferece duas funções: `generate_natural_response(prompt)` e `generate_structured_response(prompt, response_structure)`.

@@ -1,5 +1,4 @@
 import { CalendarBlankIcon, FlagIcon, WarningIcon } from "@phosphor-icons/react";
-import { motion } from "motion/react";
 import { useMemo } from "react";
 import {
     dayKey,
@@ -15,7 +14,7 @@ import type { ApprovalItem, Meeting, RecordStatus, Task } from "../lib/types";
 import { ConflictNote } from "./item-parts";
 import { Pill, Skeleton, cn, type Tone } from "./ui";
 
-export type AgendaFilter = "upcoming" | "conflicts" | "history";
+type AgendaFilter = "upcoming" | "conflicts" | "history";
 
 function statusTone(status: RecordStatus): Tone {
     if (isOpenStatus(status)) return "accent";
@@ -148,9 +147,8 @@ const EMPTY: Record<AgendaFilter, { title: string; body: string }> = {
     },
 };
 
-export function AgendaView({
+export function AgendaRecords({
     filter,
-    onFilter,
     upcoming,
     conflicts,
     history,
@@ -158,7 +156,6 @@ export function AgendaView({
     onOpen,
 }: {
     filter: AgendaFilter;
-    onFilter: (filter: AgendaFilter) => void;
     upcoming: Meeting[];
     conflicts: Meeting[];
     history: ApprovalItem[];
@@ -179,56 +176,8 @@ export function AgendaView({
         [filter, history, upcoming, conflicts],
     );
 
-    const filters: { id: AgendaFilter; label: string; count?: number }[] = [
-        { id: "upcoming", label: "Próximos" },
-        { id: "conflicts", label: "Conflitos", count: conflicts.length },
-        { id: "history", label: "Histórico" },
-    ];
-
     return (
         <div className="p-3">
-            <div role="radiogroup" aria-label="Filtrar agenda" className="mb-3 flex gap-1.5">
-                {filters.map((item) => {
-                    const active = filter === item.id;
-                    return (
-                        <button
-                            key={item.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={active}
-                            onClick={() => onFilter(item.id)}
-                            className={cn(
-                                "relative inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium transition-colors",
-                                active
-                                    ? "text-surface"
-                                    : "bg-surface text-ink-2 ring-1 ring-line hover:text-ink",
-                            )}
-                        >
-                            {active && (
-                                <motion.span
-                                    layoutId="agenda-filter"
-                                    className="absolute inset-0 rounded-full bg-ink"
-                                    transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                                />
-                            )}
-                            <span className="relative">{item.label}</span>
-                            {Boolean(item.count) && (
-                                <span
-                                    className={cn(
-                                        "relative grid h-4.5 min-w-4.5 place-items-center rounded-full px-1 text-[11px] font-semibold tabular-nums",
-                                        active
-                                            ? "bg-surface/20 text-surface"
-                                            : "bg-warn-soft text-warn",
-                                    )}
-                                >
-                                    {item.count}
-                                </span>
-                            )}
-                        </button>
-                    );
-                })}
-            </div>
-
             {loading ? (
                 <div className="space-y-2 rounded-card border border-line bg-surface p-3.5">
                     {[0, 1, 2].map((key) => (
