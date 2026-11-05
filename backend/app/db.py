@@ -139,6 +139,13 @@ def initialize_database():
             """
         )
 
+        integration_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(integrations)")
+        }
+        for column in ("account_name", "connection_id"):
+            if column not in integration_columns:
+                connection.execute(f"ALTER TABLE integrations ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+
         oauth_columns = {
             row["name"]
             for row in connection.execute(

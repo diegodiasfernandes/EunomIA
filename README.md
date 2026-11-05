@@ -103,6 +103,24 @@ cd backend
 python -m unittest discover -s tests -v
 ```
 
+Para testar o pop-up de contas no Windows, com Google Chrome instalado, gere primeiro o build da extensão e execute na raiz:
+
+```powershell
+backend\.venv\Scripts\python.exe extension\tests\accounts_browser.py
+```
+
+O teste usa Chrome headless com perfil temporário e API simulada local: verifica abertura, identidade, fechamento por Esc e clique fora, confirmação, cancelamento, falha, nova tentativa e estado desconectado. Não acessa nem desconecta contas Google reais.
+
+## Contas Google
+
+Clique no avatar ou no e-mail do cabeçalho para abrir **Contas conectadas**. **Desconectar** pede confirmação antes de chamar `POST /api/integrations/google/disconnect` com `expected_email` e `confirmed: true`. O backend revoga a autorização no Google, remove os tokens locais e invalida tentativas OAuth pendentes. Se a revogação falhar, retorna erro e preserva a conexão local para nova tentativa. Eventos, e-mails e tarefas no Google não são apagados; as credenciais OAuth da aplicação permanecem intactas.
+
+Os registros locais da conta desconectada são preservados em um espaço arquivado por conta. Ao conectar a mesma conta, seus registros voltam ao espaço ativo; outra conta recebe somente os próprios registros. Dados locais anteriores à primeira conexão permanecem arquivados separadamente. A aplicação continua com uma única conta ativa; **Adicionar nova conta — Em breve** permanece desabilitado.
+
+O status retornado por `/api/integrations/google/status` e `/api/dashboard` inclui nome e identificador da conexão, sem tokens. O nome real é obtido do Google durante a autorização com a permissão `userinfo.profile`; conexões anteriores podem precisar de nova autorização para fornecê-lo. Sem nome disponível, o painel usa “Conta Google” e o e-mail real. O OAuth permite escolher a conta com `consent select_account`.
+
+O painel separa caches por conexão e reinicia conversas e detalhes em memória ao trocar de conta. Solicitações antigas com `X-Eunomia-Connection` incompatível são rejeitadas, evitando aplicar ações à conta seguinte. No backend local, mantenha uma única instância/worker do Uvicorn: as operações da conta e as requisições são serializadas para evitar troca durante uma sincronização em andamento.
+
 ## Google OAuth
 
 1. No Google Cloud Console, habilite Gmail API, Google Calendar API e Google Tasks API e configure a tela de consentimento OAuth.

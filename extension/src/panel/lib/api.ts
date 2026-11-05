@@ -59,6 +59,12 @@ const http = axios.create({
     headers: { "Content-Type": "application/json" },
 });
 
+let activeConnection: string | null = null;
+http.interceptors.request.use((config) => {
+    if (activeConnection !== null) config.headers.set("X-Eunomia-Connection", activeConnection);
+    return config;
+});
+
 http.interceptors.response.use(
     (response) => response,
     (error: unknown) => Promise.reject(toApiError(error)),
@@ -70,7 +76,14 @@ export const api = {
     agenda: (from: string | null) =>
         http.get<AgendaPage>("/api/agenda", { params: from ? { from_date: from } : {}, timeout: 90_000 })
             .then((r) => r.data),
-    dashboard: () => http.get<Dashboard>("/api/dashboard").then((r) => r.data),
+    dashboard: () => http.get<Dashboard>("/api/dashboard").then((r) => {
+        activeConnection = r.data.google.connection_id ?? (r.data.google.connected ? "legacy" : "offline");
+        return r.data;
+    }),
+
+    disconnectGoogle: (email: string) => http.post<{ connected: false; revoked: boolean }>(
+        "/api/integrations/google/disconnect", { expected_email: email, confirmed: true }, { timeout: 30_000 },
+    ).then((r) => { activeConnection = "offline"; return r.data; }),
 
     events: () => http.get<{ events: Meeting[] }>("/api/events").then((r) => r.data.events),
 

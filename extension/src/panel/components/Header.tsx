@@ -7,10 +7,12 @@ export function Header({
     google,
     syncing,
     onScan,
+    onAccounts,
 }: {
     google: GoogleStatus | undefined;
     syncing: boolean;
     onScan: () => void;
+    onAccounts: () => void;
 }) {
     const subtitle = !google
         ? "Assistente de agenda"
@@ -20,17 +22,19 @@ export function Header({
 
     return (
         <header className="flex items-center gap-3 px-4 pt-4 pb-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-accent text-on-accent shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]">
-                <SparkleIcon size={22} weight="fill" />
-            </span>
-            <div className="min-w-0 flex-1">
-                <h1 className="text-[16px] leading-tight font-semibold tracking-[-0.01em]">
+            <button type="button" onClick={onAccounts} aria-haspopup="dialog" aria-label="Gerenciar contas conectadas" className="flex min-w-0 flex-1 items-center gap-3 rounded-control text-left hover:bg-sunken/60">
+                <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-accent text-on-accent shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]">
+                    {google?.connected ? (google.name || google.email || "G").charAt(0).toUpperCase() : <SparkleIcon size={22} weight="fill" />}
+                </span>
+            <span className="min-w-0 flex-1">
+                <span role="heading" aria-level={1} className="block text-[16px] leading-tight font-semibold tracking-[-0.01em]">
                     EunomIA
-                </h1>
-                <p className="truncate text-[12.5px] text-ink-3" title={subtitle}>
+                </span>
+                <span className="block truncate text-[12.5px] text-ink-3" title={subtitle}>
                     {subtitle}
-                </p>
-            </div>
+                </span>
+            </span>
+            </button>
             <IconButton
                 label={syncing ? "Varredura em andamento" : "Varrer e-mails"}
                 onClick={onScan}

@@ -5,6 +5,7 @@ import { useDashboard } from "./queries";
 // OAuth runs in a popup window; the backend stores the token and we poll until the Calendar and Tasks scopes show up.
 export function useGoogleConnect(onConnected: () => void) {
     const [windowId, setWindowId] = useState<number | null>(null);
+    const [originalConnection, setOriginalConnection] = useState<string | undefined>(undefined);
     const connecting = windowId !== null;
     const { data } = useDashboard(connecting ? 2_500 : undefined);
     const googleReady =
@@ -13,11 +14,11 @@ export function useGoogleConnect(onConnected: () => void) {
     const handleConnected = useEffectEvent(onConnected);
 
     useEffect(() => {
-        if (windowId === null || !googleReady) return;
+        if (windowId === null || !googleReady || data?.google.connection_id === originalConnection) return;
         chrome.windows.remove(windowId).catch(() => undefined);
         setWindowId(null);
         handleConnected();
-    }, [windowId, googleReady]);
+    }, [windowId, googleReady, data?.google.connection_id, originalConnection]);
 
     useEffect(() => {
         if (windowId === null) return;
@@ -29,6 +30,7 @@ export function useGoogleConnect(onConnected: () => void) {
     }, [windowId]);
 
     async function connect() {
+        setOriginalConnection(data?.google.connection_id);
         if (typeof chrome === "undefined" || !chrome.windows?.create) {
             window.open(api.googleAuthUrl, "_blank", "noopener");
             return;

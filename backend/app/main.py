@@ -14,6 +14,8 @@ from google.auth.exceptions import GoogleAuthError
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
+from .account_session import account_operation, expected_connection
+from .google_accounts import AccountChangedError, disconnect_google
 from .calendar_agenda import AgendaAuthorizationError, list_agenda
 from .assistant import GeminiUnavailableError, generate_natural_response
 from .db import connect, initialize_database
@@ -134,6 +136,7 @@ def startup():
 
 
 @app.get("/api/dashboard")
+@account_operation
 def dashboard():
     with connect() as connection:
         tasks = connection.execute(
@@ -157,6 +160,7 @@ def dashboard():
 
 
 @app.get("/api/tasks/history")
+@account_operation
 def task_history():
     with connect() as connection:
         rows = connection.execute(
@@ -189,6 +193,7 @@ def task_history():
 
 
 @app.get("/api/events")
+@account_operation
 def events():
     with connect() as connection:
         rows = connection.execute(
@@ -224,6 +229,7 @@ def events():
 
 
 @app.patch("/api/events/{event_id}")
+@account_operation
 def review_event(event_id: UUID, request: EventReviewRequest):
     editable_fields = {
         "title",
@@ -472,6 +478,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
 
 
 @app.patch("/api/tasks/{task_id}")
+@account_operation
 def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
     editable_fields = {
         "title",
@@ -698,6 +705,7 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
 
 
 @app.post("/api/events", status_code=201)
+@account_operation
 def create_pending_event(request: EventConfirmationRequest):
     if request.starts_at.utcoffset() is None or request.ends_at.utcoffset() is None:
         raise HTTPException(
@@ -756,6 +764,7 @@ def create_pending_event(request: EventConfirmationRequest):
 
 
 @app.post("/api/tasks", status_code=201)
+@account_operation
 def create_pending_task(request: TaskConfirmationRequest):
     title = request.title.strip()
     if not title:
@@ -805,6 +814,7 @@ def create_pending_task(request: TaskConfirmationRequest):
 
 
 @app.post("/api/chat")
+@account_operation
 def chat(request: ChatRequest):
     message = request.message.strip()
     if not message:
@@ -940,11 +950,13 @@ def chat(request: ChatRequest):
 
 
 @app.get("/api/integrations/google/status")
+@account_operation
 def google_status():
     return integration_status()
 
 
 @app.get("/api/integrations/google/auth")
+@account_operation
 def google_auth():
     try:
         return RedirectResponse(begin_oauth())
@@ -953,6 +965,7 @@ def google_auth():
 
 
 @app.get("/api/integrations/google/callback")
+@account_operation
 def google_callback(request: Request, code: str, state: str):
     try:
         finish_oauth(str(request.url), state)
@@ -962,6 +975,7 @@ def google_callback(request: Request, code: str, state: str):
 
 
 @app.post("/api/integrations/google/sync")
+@account_operation
 def google_sync(request: GoogleSyncRequest | None = None):
     request = request or GoogleSyncRequest()
     if request.email_since > request.email_until:
@@ -993,6 +1007,7 @@ def google_sync(request: GoogleSyncRequest | None = None):
 
 
 @app.get("/api/agenda")
+@account_operation
 def agenda(from_date: date | None = None):
     try:
         return list_agenda(from_date)
@@ -1003,3 +1018,34 @@ def agenda(from_date: date | None = None):
             status_code=502,
             detail="Não foi possível atualizar a agenda do Google. Tente novamente em instantes; seus registros locais foram preservados.",
         ) from error
+
+
+class GoogleDisconnectRequest(BaseModel):
+    expected_email: str = Field(min_length=1)
+    confirmed: Literal[True]
+
+
+@app.post("/api/integrations/google/disconnect")
+@account_operation
+def google_disconnect(request: GoogleDisconnectRequest):
+    try:
+        return disconnect_google(request.expected_email)
+    except AccountChangedError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (RuntimeError, OSError, ValueError) as error:
+        raise HTTPException(status_code=502, detail="A desconexão não foi concluída. Tente novamente em instantes.") from error
+
+
+@app.middleware("http")
+async def bind_account_connection(request: Request, call_next):
+    expected = request.headers.get("X-Eunomia-Connection")
+    if request.url.path in {"/api/dashboard", "/api/integrations/google/status", "/api/integrations/google/auth", "/api/integrations/google/callback"}:
+        expected = None
+    token = expected_connection.set(expected)
+    try:
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+    finally:
+        expected_connection.reset(token)

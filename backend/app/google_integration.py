@@ -11,6 +11,7 @@ from googleapiclient.errors import HttpError
 from google.auth.exceptions import GoogleAuthError
 from oauthlib.oauth2 import OAuth2Error
 
+from .account_session import account_operation, activate_workspace
 from .assistant import generate_structured_response
 from .db import connect
 
@@ -19,6 +20,7 @@ if os.getenv("ENVIRONMENT", "development") == "development":
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     "https://www.googleapis.com/auth/tasks",
@@ -223,6 +225,7 @@ def _client_config() -> dict:
     }
 
 
+@account_operation
 def begin_oauth() -> str:
     flow = Flow.from_client_config(
         _client_config(),
@@ -234,7 +237,7 @@ def begin_oauth() -> str:
     authorization_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",
+        prompt="consent select_account",
     )
 
     with connect() as connection:
@@ -253,6 +256,7 @@ def begin_oauth() -> str:
     return authorization_url
 
 
+@account_operation
 def finish_oauth(authorization_response: str, state: str) -> str:
     with connect() as connection:
         stored = connection.execute(
@@ -317,24 +321,36 @@ def finish_oauth(authorization_response: str, state: str) -> str:
             f"Falha ao validar a conta Google: {error}"
         ) from error
 
+    if not account_email:
+        raise ValueError("O Google não informou o e-mail da conta autenticada.")
+    account_name = ""
+    try:
+        if credentials.has_scopes(["https://www.googleapis.com/auth/userinfo.profile"]):
+            identity = build("oauth2", "v2", credentials=credentials).userinfo().get().execute()
+            account_name = identity.get("name", "")
+    except (HttpError, GoogleAuthError, OSError):
+        pass  # Existing accounts may not have authorized profile information yet.
+
     with connect() as connection:
+        current = connection.execute("SELECT account_email FROM integrations WHERE name='google'").fetchone()
+        if current and current["account_email"].casefold() != account_email.casefold():
+            raise ValueError("Desconecte a conta atual antes de conectar outra conta Google.")
+        if not current:
+            activate_workspace(connection, account_email)
         connection.execute(
-            """
-            INSERT INTO integrations(name, credentials_json, account_email)
-            VALUES ('google', ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                credentials_json = excluded.credentials_json,
-                account_email = excluded.account_email
-            """,
-            (
-                credentials.to_json(),
-                account_email,
-            ),
+            """INSERT INTO integrations(name, credentials_json, account_email, account_name, connection_id)
+               VALUES ('google', ?, ?, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET credentials_json=excluded.credentials_json,
+               account_email=excluded.account_email, account_name=excluded.account_name,
+               connection_id=excluded.connection_id""",
+            (credentials.to_json(), account_email, account_name, str(uuid4())),
         )
+        connection.execute("DELETE FROM oauth_states")
 
     return account_email
 
 
+@account_operation
 def google_credentials() -> Credentials | None:
     with connect() as connection:
         row = connection.execute(
@@ -374,7 +390,7 @@ def integration_status() -> dict:
     with connect() as connection:
         row = connection.execute(
             """
-            SELECT account_email, credentials_json
+            SELECT account_email, credentials_json, account_name, connection_id
             FROM integrations
             WHERE name = 'google'
             """
@@ -399,6 +415,8 @@ def integration_status() -> dict:
     return {
         "connected": bool(row),
         "email": row["account_email"] if row else None,
+        "name": dict(row).get("account_name") if row else None,
+        "connection_id": (dict(row).get("connection_id") or "legacy") if row else "offline",
         "calendar_connected": calendar_connected,
         "agenda_connected": calendar_connected and bool(row) and "https://www.googleapis.com/auth/calendar.calendarlist.readonly" in granted_scopes,
         "tasks_connected": tasks_connected,
@@ -588,6 +606,7 @@ def _stage_cancellation(connection, thread_id: str, record_type: str) -> bool:
     return True
 
 
+@account_operation
 def sync_google(
     email_since: date | None = None,
     email_until: date | None = None,

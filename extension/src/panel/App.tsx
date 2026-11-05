@@ -1,7 +1,8 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarAgenda } from "./components/CalendarAgenda";
+import { AccountsSheet } from "./components/AccountsSheet";
 import { ApiErrorState } from "./components/ApiErrorState";
 import { ApprovalsView, type ApprovalFilter } from "./components/Approvals";
 import { Composer } from "./components/Composer";
@@ -14,8 +15,9 @@ import { Tabs, type TabId } from "./components/Tabs";
 import { ToastProvider, useToast } from "./components/Toast";
 import { plural } from "./lib/format";
 import { notifyPendingCount, onHostMessage, requestClose } from "./lib/host";
-import { useSyncEmails, useWorkspace } from "./lib/queries";
-import type { ApprovalItem, Meeting, SyncRange, SyncResult } from "./lib/types";
+import { queryKeys, useDashboard, useSyncEmails, useWorkspace } from "./lib/queries";
+import { api } from "./lib/api";
+import type { ApprovalItem, Dashboard, Meeting, SyncRange, SyncResult } from "./lib/types";
 import { useChatSession } from "./lib/useChatSession";
 import { useGoogleConnect } from "./lib/useGoogleConnect";
 
@@ -23,30 +25,50 @@ export function App() {
     return (
         <div className="relative h-full overflow-hidden bg-surface">
             <ToastProvider>
-                <Panel />
+                <AccountPanel />
             </ToastProvider>
         </div>
     );
 }
 
-function Panel() {
+function AccountPanel() {
+    const { data } = useDashboard();
+    const toast = useToast();
+    const google = useGoogleConnect(() => toast("ok", "Conta Google conectada."));
+    return <Panel key={data?.google.connection_id ?? "loading"} google={google} />;
+}
+
+function Panel({ google }: { google: ReturnType<typeof useGoogleConnect> }) {
     const workspace = useWorkspace();
     const toast = useToast();
     const client = useQueryClient();
     const chat = useChatSession();
     const sync = useSyncEmails();
-    const google = useGoogleConnect(() =>
-        toast("ok", "Conta Google conectada. Já dá para varrer seus e-mails."),
-    );
+
 
     const [tab, setTab] = useState<TabId>("overview");
     const [approvalFilter, setApprovalFilter] = useState<ApprovalFilter>("pending");
     const [detail, setDetail] = useState<{ item: ApprovalItem; editing: boolean } | null>(null);
     const [scanOpen, setScanOpen] = useState(false);
+    const [accountsOpen, setAccountsOpen] = useState(false);
     const [lastSync, setLastSync] = useState<SyncResult | null>(null);
     const [draft, setDraft] = useState("");
     const composerRef = useRef<HTMLTextAreaElement>(null);
     const mainRef = useRef<HTMLElement>(null);
+
+    const disconnect = useMutation({
+        mutationFn: () => api.disconnectGoogle(workspace.google?.email ?? ""),
+        onSuccess: async () => {
+            await client.cancelQueries();
+            client.removeQueries({ predicate: (query) => query.queryKey[0] !== "dashboard" });
+            client.setQueryData<Dashboard>(queryKeys.dashboard, {
+                tasks: [], google: { connected: false, email: null, name: null,
+                    connection_id: "offline", calendar_connected: false, tasks_connected: false, agenda_connected: false },
+            });
+            void client.invalidateQueries({ queryKey: queryKeys.dashboard });
+            toast("ok", "Conta Google desconectada.");
+        },
+    });
 
     const pendingCount = workspace.approvals.length;
 
@@ -114,7 +136,7 @@ function Panel() {
     }
 
     function onKeyDown(event: KeyboardEvent) {
-        if (event.key === "Escape" && !detail && !scanOpen) requestClose();
+        if (event.key === "Escape" && !detail && !scanOpen && !accountsOpen) requestClose();
     }
 
     const blockingError = workspace.error && !workspace.hasData ? workspace.error : null;
@@ -185,6 +207,7 @@ function Panel() {
     return (
         <div className="flex h-full min-h-0 flex-col" onKeyDown={onKeyDown}>
             <Header
+                onAccounts={() => { disconnect.reset(); setAccountsOpen(true); }}
                 google={workspace.google}
                 syncing={sync.isPending}
                 onScan={() => setScanOpen(true)}
@@ -242,6 +265,17 @@ function Panel() {
                         onClose={() => setDetail(null)}
                     />
                 )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {accountsOpen && <AccountsSheet
+                    google={workspace.google}
+                    pending={disconnect.isPending}
+                    error={disconnect.error?.message ?? null}
+                    onDisconnect={() => disconnect.mutate()}
+                    onConnect={() => { setAccountsOpen(false); void google.connect(); }}
+                    onClose={() => setAccountsOpen(false)}
+                />}
             </AnimatePresence>
 
             <AnimatePresence>

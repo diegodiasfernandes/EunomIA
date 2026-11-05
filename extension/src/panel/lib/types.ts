@@ -56,6 +56,8 @@ export interface GoogleStatus {
     calendar_connected: boolean;
     tasks_connected: boolean;
     agenda_connected?: boolean;
+    name?: string | null;
+    connection_id?: string;
 }
 
 export interface CalendarEvent {

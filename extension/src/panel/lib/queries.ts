@@ -22,13 +22,14 @@ export function useDashboard(refetchInterval = POLL_MS) {
     return useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard, refetchInterval });
 }
 
-export function useEvents() {
-    return useQuery({ queryKey: queryKeys.events, queryFn: api.events, refetchInterval: POLL_MS });
+export function useEvents(scope: string, enabled: boolean) {
+    return useQuery({ queryKey: [...queryKeys.events, scope], queryFn: api.events, refetchInterval: POLL_MS, enabled });
 }
 
-export function useTaskHistory() {
+export function useTaskHistory(scope: string, enabled: boolean) {
     return useQuery({
-        queryKey: queryKeys.taskHistory,
+        queryKey: [...queryKeys.taskHistory, scope],
+        enabled,
         queryFn: api.taskHistory,
         refetchInterval: POLL_MS,
     });
@@ -53,8 +54,9 @@ const byDateAsc = (a: string | null, b: string | null) => {
 
 export function useWorkspace() {
     const dashboard = useDashboard();
-    const events = useEvents();
-    const taskHistory = useTaskHistory();
+    const scope = dashboard.data?.google.connection_id ?? "loading";
+    const events = useEvents(scope, dashboard.isSuccess);
+    const taskHistory = useTaskHistory(scope, dashboard.isSuccess);
 
     const derived = useMemo(() => {
         const meetings = events.data ?? [];

@@ -71,7 +71,7 @@ export function CalendarAgenda({ google, connecting, onConnect }: {
 }) {
     const ready = Boolean(google?.connected && google.agenda_connected);
     const agenda = useInfiniteQuery({
-        queryKey: ["calendar-agenda", google?.email],
+        queryKey: ["calendar-agenda", google?.email, google?.connection_id],
         queryFn: ({ pageParam }) => api.agenda(pageParam),
         initialPageParam: null as string | null,
         getNextPageParam: (page) => page.next_from,
