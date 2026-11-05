@@ -21,6 +21,8 @@ export interface Meeting {
     source: RecordSource;
     location: string | null;
     sender: string;
+    pending_action: "update" | "cancel" | null;
+    previous_status: RecordStatus | null;
     link: string | null;
     participants: string[];
     calendar_synced: boolean;
@@ -40,6 +42,8 @@ export interface Task {
     sender: string;
     status: RecordStatus;
     source: RecordSource;
+    pending_action: "update" | "cancel" | null;
+    previous_status: RecordStatus | null;
 }
 
 export interface TaskHistory extends Task {

@@ -22,9 +22,11 @@ from .google_integration import (
     begin_oauth,
     create_calendar_event,
     create_google_task,
+    delete_calendar_event,
     finish_oauth,
     integration_status,
     sync_google,
+    update_calendar_event,
 )
 from .models import MeetingRecord, TaskDeadlineRecord
 
@@ -104,6 +106,27 @@ def _description_with_sender(description: str, sender: str) -> str:
     return f"{sender_line}\n\n{description}" if description else sender_line
 
 
+def _task_response(row) -> dict:
+    result = dict(row)
+    payload = json.loads(result.pop("pending_payload") or "{}")
+    if result.get("pending_action") == "update":
+        result.update(payload)
+    result["inferred_fields"] = json.loads(result.get("inferred_fields") or "[]")
+    return result
+
+
+def _audit_decision(connection, record_type: str, record_id: str, action: str,
+                    previous_status: str | None, new_status: str | None) -> None:
+    connection.execute(
+        """INSERT INTO decision_history(
+               user_id, record_type, record_id, action, previous_status,
+               new_status, details_json, created_at
+           ) VALUES ('demo', ?, ?, ?, ?, ?, '{}', ?)""",
+        (record_type, record_id, action, previous_status, new_status,
+         datetime.now(ZoneInfo("America/Fortaleza")).isoformat()),
+    )
+
+
 @app.on_event("startup")
 def startup():
     initialize_database()
@@ -115,7 +138,8 @@ def dashboard():
         tasks = connection.execute(
             """
             SELECT id, title, description, responsible, due_at,
-                   deadline_reference, inferred_fields, sender, status, source
+                   deadline_reference, inferred_fields, sender, status, source,
+                   pending_action, pending_payload, previous_status
             FROM tasks
             WHERE user_id = 'demo' AND status IN ('pending', 'detected')
             ORDER BY due_at
@@ -124,10 +148,7 @@ def dashboard():
 
     return {
         "tasks": [
-            {
-                **dict(task),
-                "inferred_fields": json.loads(task["inferred_fields"] or "[]"),
-            }
+            _task_response(task)
             for task in tasks
         ],
         "google": integration_status(),
@@ -172,7 +193,8 @@ def events():
         rows = connection.execute(
             """
             SELECT id, title, description, starts_at, ends_at, location,
-                   sender, status, source, provider_id, inferred_fields
+                   sender, status, source, provider_id, inferred_fields,
+                   pending_action, pending_payload, previous_status
             FROM events
             WHERE user_id = 'demo'
             ORDER BY starts_at
@@ -182,14 +204,16 @@ def events():
     meetings = [
         MeetingRecord(
             id=row["id"],
-            title=row["title"],
-            description=row["description"],
-            starts_at=row["starts_at"],
-            ends_at=row["ends_at"],
-            location=row["location"] or None,
+            title=(json.loads(row["pending_payload"])["title"] if row["pending_action"] == "update" else row["title"]),
+            description=(json.loads(row["pending_payload"])["description"] if row["pending_action"] == "update" else row["description"]),
+            starts_at=(json.loads(row["pending_payload"])["starts_at"] if row["pending_action"] == "update" else row["starts_at"]),
+            ends_at=(json.loads(row["pending_payload"])["ends_at"] if row["pending_action"] == "update" else row["ends_at"]),
+            location=((json.loads(row["pending_payload"])["location"] if row["pending_action"] == "update" else row["location"]) or None),
             sender=row["sender"] or "",
             status=row["status"],
             source=row["source"],
+            pending_action=row["pending_action"],
+            previous_status=row["previous_status"],
             calendar_synced=bool(row["provider_id"]),
             inferred_fields=json.loads(row["inferred_fields"] or "[]"),
         )
@@ -212,6 +236,57 @@ def review_event(event_id: UUID, request: EventReviewRequest):
         raise HTTPException(status_code=422, detail="Informe as alterações do compromisso.")
 
     with connect() as connection:
+        staged = connection.execute(
+            """SELECT * FROM events WHERE id = ? AND user_id = 'demo'""",
+            (str(event_id),),
+        ).fetchone()
+        if staged is not None and staged["pending_action"]:
+            if supplied_fields != {"status"} or request.status not in {"confirmed", "cancelled", "rejected"}:
+                raise HTTPException(status_code=422, detail="Confirme ou descarte a alteração pendente.")
+            previous = staged["previous_status"] or "confirmed"
+            if request.status == "rejected":
+                connection.execute(
+                    """UPDATE events SET status=?, pending_action=NULL,
+                       pending_payload=NULL, previous_status=NULL WHERE id=?""",
+                    (previous, str(event_id)),
+                )
+                _audit_decision(connection, "meeting", str(event_id), "proposal_rejected", "pending", previous)
+                return {"id": str(event_id), "status": previous}
+            if staged["pending_action"] == "cancel":
+                if request.status != "cancelled":
+                    raise HTTPException(status_code=422, detail="Confirme o cancelamento explicitamente.")
+                try:
+                    delete_calendar_event(staged["provider_id"])
+                except (HttpError, GoogleAuthError, OSError) as error:
+                    raise HTTPException(status_code=502, detail=f"Não foi possível cancelar no Google Calendar: {error}") from error
+                connection.execute(
+                    """UPDATE events SET status='cancelled', pending_action=NULL,
+                       pending_payload=NULL, previous_status=NULL, updated_at=? WHERE id=?""",
+                    (datetime.now(ZoneInfo("America/Fortaleza")).isoformat(), str(event_id)),
+                )
+                _audit_decision(connection, "meeting", str(event_id), "cancellation_confirmed", previous, "cancelled")
+                return {"id": str(event_id), "status": "cancelled", "calendar_synced": bool(staged["provider_id"])}
+            payload = json.loads(staged["pending_payload"])
+            try:
+                update_calendar_event(
+                    staged["provider_id"], title=payload["title"],
+                    description=payload["description"], starts_at=datetime.fromisoformat(payload["starts_at"]),
+                    ends_at=datetime.fromisoformat(payload["ends_at"]), location=payload["location"],
+                )
+            except (HttpError, GoogleAuthError, OSError) as error:
+                raise HTTPException(status_code=502, detail=f"Não foi possível atualizar o Google Calendar: {error}") from error
+            connection.execute(
+                """UPDATE events SET title=?, description=?, starts_at=?, ends_at=?,
+                   location=?, sender=?, preparation=?, inferred_fields=?, status=?,
+                   pending_action=NULL, pending_payload=NULL, previous_status=NULL, updated_at=?
+                   WHERE id=?""",
+                (payload["title"], payload["description"], payload["starts_at"], payload["ends_at"],
+                 payload["location"], payload["sender"], payload["preparation"], payload["inferred_fields"],
+                 previous, datetime.now(ZoneInfo("America/Fortaleza")).isoformat(), str(event_id)),
+            )
+            _audit_decision(connection, "meeting", str(event_id), "change_confirmed", "pending", previous)
+            return {"id": str(event_id), "status": previous, "calendar_synced": bool(staged["provider_id"])}
+
         if supplied_fields & editable_fields:
             if request.status is not None:
                 raise HTTPException(
@@ -351,6 +426,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
             )
             if result.rowcount == 0:
                 raise HTTPException(status_code=409, detail="O compromisso foi alterado. Atualize a tela.")
+            _audit_decision(connection, "meeting", str(event_id), "confirmed", None, "confirmed")
             return {
                 "id": str(event_id),
                 "status": "confirmed",
@@ -389,6 +465,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                 status_code=409,
                 detail="Este compromisso não pode ser alterado neste estado.",
             )
+        _audit_decision(connection, "meeting", str(event_id), request.status, None, request.status)
 
     return {"id": str(event_id), "status": request.status}
 
@@ -407,6 +484,44 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
         raise HTTPException(status_code=422, detail="Informe as alterações do prazo.")
 
     with connect() as connection:
+        staged = connection.execute(
+            "SELECT * FROM tasks WHERE id = ? AND user_id = 'demo'",
+            (str(task_id),),
+        ).fetchone()
+        if staged is not None and staged["pending_action"]:
+            if supplied_fields != {"status"} or request.status not in {"confirmed", "cancelled", "rejected"}:
+                raise HTTPException(status_code=422, detail="Confirme ou descarte a alteração pendente.")
+            previous = staged["previous_status"] or "pending"
+            if request.status == "rejected":
+                connection.execute(
+                    """UPDATE tasks SET status=?, pending_action=NULL,
+                       pending_payload=NULL, previous_status=NULL WHERE id=?""",
+                    (previous, str(task_id)),
+                )
+                _audit_decision(connection, "deadline", str(task_id), "proposal_rejected", "pending", previous)
+                return {"id": str(task_id), "status": previous}
+            if staged["pending_action"] == "cancel":
+                if request.status != "cancelled":
+                    raise HTTPException(status_code=422, detail="Confirme o cancelamento explicitamente.")
+                connection.execute(
+                    """UPDATE tasks SET status='cancelled', pending_action=NULL,
+                       pending_payload=NULL, previous_status=NULL WHERE id=?""",
+                    (str(task_id),),
+                )
+                _audit_decision(connection, "deadline", str(task_id), "cancellation_confirmed", previous, "cancelled")
+                return {"id": str(task_id), "status": "cancelled"}
+            payload = json.loads(staged["pending_payload"])
+            connection.execute(
+                """UPDATE tasks SET title=?, description=?, sender=?, responsible=?,
+                   due_at=?, deadline_reference=?, inferred_fields=?, status=?,
+                   pending_action=NULL, pending_payload=NULL, previous_status=NULL WHERE id=?""",
+                (payload["title"], payload["description"], payload["sender"], payload["responsible"],
+                 payload["due_at"], payload["deadline_reference"], payload["inferred_fields"],
+                 previous, str(task_id)),
+            )
+            _audit_decision(connection, "deadline", str(task_id), "change_confirmed", "pending", previous)
+            return {"id": str(task_id), "status": previous, "google_tasks_synced": bool(staged["provider_id"])}
+
         if supplied_fields & editable_fields:
             if request.status is not None:
                 raise HTTPException(
@@ -534,6 +649,7 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
             )
             if result.rowcount == 0:
                 raise HTTPException(status_code=409, detail="O prazo foi alterado. Atualize a tela.")
+            _audit_decision(connection, "deadline", str(task_id), "confirmed", None, "confirmed")
             return {
                 "id": str(task_id),
                 "status": "confirmed",
@@ -575,6 +691,7 @@ def review_or_complete_task(task_id: UUID, request: TaskReviewRequest):
                 status_code=409,
                 detail="Este prazo não pode ser revisado neste estado.",
             )
+        _audit_decision(connection, "deadline", str(task_id), request.status, None, request.status)
 
     return {"id": str(task_id), "status": request.status}
 

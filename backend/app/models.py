@@ -23,6 +23,8 @@ class MeetingRecord(BaseModel):
     source: str
     location: str | None = None
     sender: str = ""
+    pending_action: Literal["update", "cancel"] | None = None
+    previous_status: str | None = None
     link: str | None = None
     participants: list[str] = Field(default_factory=list)
     calendar_synced: bool = False
@@ -43,3 +45,5 @@ class TaskDeadlineRecord(BaseModel):
     event_id: str | None = None
     inferred_fields: list[str] = Field(default_factory=list)
     sender: str = ""
+    pending_action: Literal["update", "cancel"] | None = None
+    previous_status: str | None = None

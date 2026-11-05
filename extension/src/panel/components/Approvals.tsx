@@ -44,7 +44,13 @@ function ApprovalCard({
                     ) : (
                         <FlagIcon size={15} weight="bold" />
                     )}
-                    {isMeeting ? "Reunião identificada" : "Prazo identificado"}
+                    {item.record.pending_action === "cancel"
+                        ? "Cancelamento identificado"
+                        : item.record.pending_action === "update"
+                          ? "Alteração identificada"
+                          : isMeeting
+                            ? "Reunião identificada"
+                            : "Prazo identificado"}
                 </span>
                 <span className="text-[11.5px] text-ink-3">
                     via {sourceLabel(item.record.source).toLowerCase()}

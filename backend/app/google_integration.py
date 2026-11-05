@@ -444,6 +444,31 @@ def create_calendar_event(
     return event.get("id")
 
 
+def update_calendar_event(provider_id: str, **fields) -> None:
+    credentials = google_credentials()
+    if credentials is None or not provider_id:
+        return
+    body = {
+        "summary": fields["title"],
+        "description": fields["description"],
+        "location": fields["location"],
+        "start": {"dateTime": fields["starts_at"].isoformat(), "timeZone": "America/Fortaleza"},
+        "end": {"dateTime": fields["ends_at"].isoformat(), "timeZone": "America/Fortaleza"},
+    }
+    build("calendar", "v3", credentials=credentials).events().patch(
+        calendarId="primary", eventId=provider_id, body=body
+    ).execute()
+
+
+def delete_calendar_event(provider_id: str) -> None:
+    credentials = google_credentials()
+    if credentials is None or not provider_id:
+        return
+    build("calendar", "v3", credentials=credentials).events().delete(
+        calendarId="primary", eventId=provider_id
+    ).execute()
+
+
 def create_google_task(
     *,
     title: str,
@@ -506,6 +531,59 @@ def _headers(payload: dict) -> dict:
         for header in payload.get("headers", [])
         if "name" in header and "value" in header
     }
+
+
+def _audit(
+    connection,
+    record_type: str,
+    record_id: str,
+    action: str,
+    previous_status: str | None,
+    new_status: str | None,
+    details: dict | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO decision_history(
+            user_id, record_type, record_id, action, previous_status,
+            new_status, details_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            USER_ID,
+            record_type,
+            record_id,
+            action,
+            previous_status,
+            new_status,
+            json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+
+def _stage_cancellation(connection, thread_id: str, record_type: str) -> bool:
+    table = "tasks" if record_type == "deadline" else "events"
+    source_ref = f"email-deadline:{thread_id}" if record_type == "deadline" else thread_id
+    row = connection.execute(
+        f"SELECT id, status, pending_action FROM {table} WHERE user_id = ? AND source_ref = ?",
+        (USER_ID, source_ref),
+    ).fetchone()
+    if row is None or row["status"] in {"cancelled", "rejected", "done"}:
+        return False
+    if row["pending_action"] == "cancel":
+        return False
+    connection.execute(
+        f"""
+        UPDATE {table}
+        SET previous_status = status, status = 'pending',
+            pending_action = 'cancel', pending_payload = '{{}}'
+        WHERE id = ?
+        """,
+        (row["id"],),
+    )
+    _audit(connection, record_type, row["id"], "cancellation_detected", row["status"], "pending")
+    return True
 
 
 def sync_google(
@@ -670,35 +748,9 @@ def sync_google(
                 continue
 
             if extracted.get("cancelled"):
-                connection.execute(
-                    """
-                    DELETE FROM tasks
-                    WHERE user_id = ? AND source = 'email'
-                      AND (
-                          source_ref = ?
-                          OR source_ref = ?
-                          OR event_id IN (
-                              SELECT id FROM events
-                              WHERE user_id = ? AND source = 'email'
-                                AND source_ref = ?
-                          )
-                      )
-                    """,
-                    (
-                        USER_ID,
-                        thread_id,
-                        f"email-deadline:{thread_id}",
-                        USER_ID,
-                        thread_id,
-                    ),
-                )
-                connection.execute(
-                    """
-                    DELETE FROM events
-                    WHERE user_id = ? AND source = 'email' AND source_ref = ?
-                    """,
-                    (USER_ID, thread_id),
-                )
+                if _stage_cancellation(connection, thread_id, record_type):
+                    detected_count += 1
+                    pending_count += 1
                 continue
 
             if record_type == "deadline":
@@ -709,52 +761,59 @@ def sync_google(
                     inferred_fields,
                 ) = _deadline_schedule(extracted, ordered[-1]["subject"])
                 task_source_ref = f"email-deadline:{thread_id}"
-                connection.execute(
-                    """
-                    INSERT INTO tasks(
-                        id, user_id, source_ref, title, description, sender,
-                        responsible, due_at, deadline_reference, status, source,
-                        inferred_fields
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'email', ?)
-                    ON CONFLICT(user_id, source_ref) DO UPDATE SET
-                        title = excluded.title,
-                        description = excluded.description,
-                        sender = excluded.sender,
-                        responsible = excluded.responsible,
-                        due_at = excluded.due_at,
-                        deadline_reference = excluded.deadline_reference,
-                        status = excluded.status,
-                        inferred_fields = excluded.inferred_fields
-                    """,
-                    (
-                        str(uuid4()),
-                        USER_ID,
-                        task_source_ref,
-                        title,
-                        _description_with_senders(
-                            str(extracted.get("description") or "").strip(),
-                            ordered,
-                        ),
-                        _sender_for_messages(ordered),
-                        str(extracted.get("responsible") or "").strip() or None,
-                        due_at,
-                        deadline_reference,
-                        "pending",
-                        json.dumps(inferred_fields, ensure_ascii=False),
+                payload = {
+                    "title": title,
+                    "description": _description_with_senders(
+                        str(extracted.get("description") or "").strip(), ordered
                     ),
-                )
-                detected_count += 1
+                    "sender": _sender_for_messages(ordered),
+                    "responsible": str(extracted.get("responsible") or "").strip() or None,
+                    "due_at": due_at,
+                    "deadline_reference": deadline_reference,
+                    "inferred_fields": json.dumps(inferred_fields, ensure_ascii=False),
+                }
                 task = connection.execute(
-                    """
-                    SELECT status
-                    FROM tasks
-                    WHERE user_id = ? AND source_ref = ?
-                    """,
+                    "SELECT * FROM tasks WHERE user_id = ? AND source_ref = ?",
                     (USER_ID, task_source_ref),
                 ).fetchone()
-                if task and task["status"] == "pending":
+                if task is None:
+                    task_id = str(uuid4())
+                    connection.execute(
+                        """
+                        INSERT INTO tasks(
+                            id, user_id, source_ref, title, description, sender,
+                            responsible, due_at, deadline_reference, status, source,
+                            inferred_fields
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'email', ?)
+                        """,
+                        (task_id, USER_ID, task_source_ref, payload["title"],
+                         payload["description"], payload["sender"], payload["responsible"],
+                         payload["due_at"], payload["deadline_reference"], payload["inferred_fields"]),
+                    )
+                    _audit(connection, "deadline", task_id, "detected", None, "pending")
+                    detected_count += 1
                     pending_count += 1
+                else:
+                    changed = any(task[key] != value for key, value in payload.items())
+                    staged = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                    if task["status"] in {"rejected", "cancelled", "done"}:
+                        continue
+                    if changed and task["pending_payload"] != staged:
+                        if task["status"] in {"pending", "detected"} and not task["pending_action"]:
+                            connection.execute(
+                                """UPDATE tasks SET title=?, description=?, sender=?, responsible=?,
+                                   due_at=?, deadline_reference=?, inferred_fields=? WHERE id=?""",
+                                (*payload.values(), task["id"]),
+                            )
+                        else:
+                            connection.execute(
+                                """UPDATE tasks SET previous_status=status, status='pending',
+                                   pending_action='update', pending_payload=? WHERE id=?""",
+                                (staged, task["id"]),
+                            )
+                        _audit(connection, "deadline", task["id"], "change_detected", task["status"], "pending", payload)
+                        detected_count += 1
+                        pending_count += 1
                 continue
 
             (
@@ -770,59 +829,58 @@ def sync_google(
 
             start_dt = datetime.fromisoformat(starts_at)
 
-            connection.execute(
-                """
-                INSERT INTO events(
-                    id,
-                    user_id,
-                    source_ref,
-                    title,
-                    description,
-                    starts_at,
-                    ends_at,
-                    location,
-                    sender,
-                    status,
-                    source,
-                    preparation,
-                    inferred_fields,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'email', ?, ?, ?)
-                ON CONFLICT(user_id, source_ref) DO UPDATE SET
-                    title = excluded.title,
-                    description = excluded.description,
-                    starts_at = excluded.starts_at,
-                    ends_at = excluded.ends_at,
-                    location = excluded.location,
-                    sender = excluded.sender,
-                    status = excluded.status,
-                    preparation = excluded.preparation,
-                    inferred_fields = excluded.inferred_fields,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    str(uuid4()),
-                    USER_ID,
-                    thread_id,
-                    title,
-                    _description_with_senders(
-                        str(extracted.get("description") or "").strip(),
-                        ordered,
-                    ),
-                    starts_at,
-                    (
-                        start_dt
-                        + timedelta(minutes=duration)
-                    ).isoformat(),
-                    extracted.get("location", ""),
-                    _sender_for_messages(ordered),
-                    "pending",
-                    extracted.get("preparation", ""),
-                    json.dumps(inferred_fields, ensure_ascii=False),
-                    now.isoformat(),
+            payload = {
+                "title": title,
+                "description": _description_with_senders(
+                    str(extracted.get("description") or "").strip(), ordered
                 ),
-            )
+                "starts_at": starts_at,
+                "ends_at": (start_dt + timedelta(minutes=duration)).isoformat(),
+                "location": extracted.get("location", ""),
+                "sender": _sender_for_messages(ordered),
+                "preparation": extracted.get("preparation", ""),
+                "inferred_fields": json.dumps(inferred_fields, ensure_ascii=False),
+            }
+            event = connection.execute(
+                "SELECT * FROM events WHERE user_id = ? AND source_ref = ?",
+                (USER_ID, thread_id),
+            ).fetchone()
+            is_new_or_changed = False
+            if event is None:
+                event_id = str(uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO events(
+                        id, user_id, source_ref, title, description, starts_at, ends_at,
+                        location, sender, status, source, preparation, inferred_fields, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'email', ?, ?, ?)
+                    """,
+                    (event_id, USER_ID, thread_id, payload["title"], payload["description"],
+                     payload["starts_at"], payload["ends_at"], payload["location"],
+                     payload["sender"], payload["preparation"], payload["inferred_fields"], now.isoformat()),
+                )
+                _audit(connection, "meeting", event_id, "detected", None, "pending")
+                is_new_or_changed = True
+            else:
+                changed = any(event[key] != value for key, value in payload.items())
+                staged = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                if event["status"] in {"rejected", "cancelled"}:
+                    changed = False
+                if changed and event["pending_payload"] != staged:
+                    if event["status"] in {"pending", "detected"} and not event["pending_action"]:
+                        connection.execute(
+                            """UPDATE events SET title=?, description=?, starts_at=?, ends_at=?,
+                               location=?, sender=?, preparation=?, inferred_fields=?, updated_at=? WHERE id=?""",
+                            (*payload.values(), now.isoformat(), event["id"]),
+                        )
+                    else:
+                        connection.execute(
+                            """UPDATE events SET previous_status=status, status='pending',
+                               pending_action='update', pending_payload=?, updated_at=? WHERE id=?""",
+                            (staged, now.isoformat(), event["id"]),
+                        )
+                    _audit(connection, "meeting", event["id"], "change_detected", event["status"], "pending", payload)
+                    is_new_or_changed = True
 
             event = connection.execute(
                 """
@@ -838,7 +896,8 @@ def sync_google(
             ).fetchone()
 
             if event:
-                if event["status"] == "pending":
+                if is_new_or_changed:
+                    detected_count += 1
                     pending_count += 1
                 for message in ordered:
                     email = connection.execute(
@@ -912,7 +971,6 @@ def sync_google(
                         ),
                     )
 
-                detected_count += 1
 
     return {
         "emails": len(email_records),

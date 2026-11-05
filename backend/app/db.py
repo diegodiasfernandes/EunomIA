@@ -67,6 +67,9 @@ def initialize_database():
                 status TEXT NOT NULL DEFAULT 'confirmed',
                 source TEXT NOT NULL DEFAULT 'manual',
                 preparation TEXT NOT NULL DEFAULT '',
+                pending_action TEXT,
+                pending_payload TEXT,
+                previous_status TEXT,
                 updated_at TEXT NOT NULL,
                 UNIQUE(user_id, provider_id),
                 UNIQUE(user_id, source_ref)
@@ -87,6 +90,9 @@ def initialize_database():
                 inferred_fields TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL DEFAULT 'pending',
                 source TEXT NOT NULL DEFAULT 'manual',
+                pending_action TEXT,
+                pending_payload TEXT,
+                previous_status TEXT,
                 UNIQUE(user_id, source_ref)
             );
 
@@ -105,6 +111,18 @@ def initialize_database():
                 email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
                 event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
                 PRIMARY KEY(email_id, event_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                record_type TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                previous_status TEXT,
+                new_status TEXT,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS integrations (
@@ -172,6 +190,9 @@ def initialize_database():
             connection.execute(
                 "ALTER TABLE tasks ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
             )
+        for column in ("pending_action", "pending_payload", "previous_status"):
+            if column not in task_columns:
+                connection.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
 
         event_columns = {
             row["name"]
@@ -185,6 +206,9 @@ def initialize_database():
             connection.execute(
                 "ALTER TABLE events ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
             )
+        for column in ("pending_action", "pending_payload", "previous_status"):
+            if column not in event_columns:
+                connection.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT")
 
         connection.execute(
             """

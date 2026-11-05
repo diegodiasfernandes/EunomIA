@@ -112,7 +112,7 @@ export function useWorkspace() {
 }
 
 export function useSetStatus(
-    onSuccess: (googleSynced: boolean, status: "confirmed" | "cancelled") => void,
+    onSuccess: (googleSynced: boolean, status: "confirmed" | "cancelled" | "rejected") => void,
 ) {
     const refresh = useRefreshAll();
     return useMutation({
@@ -121,7 +121,7 @@ export function useSetStatus(
             status,
         }: {
             item: ApprovalItem;
-            status: "confirmed" | "cancelled";
+            status: "confirmed" | "cancelled" | "rejected";
         }) => {
             if (item.kind === "meeting") {
                 const result = await api.setMeetingStatus(item.record.id, status);

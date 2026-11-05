@@ -73,7 +73,7 @@ export const api = {
     taskHistory: () =>
         http.get<{ tasks: TaskHistory[] }>("/api/tasks/history").then((r) => r.data.tasks),
 
-    setMeetingStatus: (id: string, status: Extract<RecordStatus, "confirmed" | "cancelled">) =>
+    setMeetingStatus: (id: string, status: Extract<RecordStatus, "confirmed" | "cancelled" | "rejected">) =>
         http
             .patch<{
                 id: string;
@@ -84,7 +84,7 @@ export const api = {
 
     setTaskStatus: (
         id: string,
-        status: Extract<RecordStatus, "confirmed" | "cancelled" | "done">,
+        status: Extract<RecordStatus, "confirmed" | "cancelled" | "rejected" | "done">,
     ) =>
         http
             .patch<{

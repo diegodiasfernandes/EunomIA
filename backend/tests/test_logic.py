@@ -149,7 +149,7 @@ class AssistantTests(unittest.TestCase):
 
         build.assert_not_called()
 
-    def test_rescan_reopens_existing_meetings_in_pending(self):
+    def test_rescan_preserves_decisions_and_only_stages_relevant_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "rescan.sqlite"
             gmail = MagicMock()
@@ -271,8 +271,8 @@ class AssistantTests(unittest.TestCase):
                         row["source_ref"]: dict(row)
                         for row in connection.execute(
                             """
-                            SELECT source_ref, status, starts_at, inferred_fields,
-                                   description, sender
+                            SELECT source_ref, title, status, starts_at, inferred_fields,
+                                   description, sender, pending_action, previous_status
                             FROM events
                             WHERE source_ref IN (
                                 'thread-rejected', 'thread-pending',
@@ -282,31 +282,20 @@ class AssistantTests(unittest.TestCase):
                         )
                     }
 
-            self.assertEqual(result["email_threads_with_events"], 4)
-            self.assertEqual(result["pending_items"], 4)
-            self.assertEqual(events["thread-rejected"]["status"], "pending")
+            self.assertEqual(result["email_threads_with_events"], 3)
+            self.assertEqual(result["pending_items"], 3)
+            self.assertEqual(events["thread-rejected"]["status"], "rejected")
             self.assertEqual(events["thread-pending"]["status"], "pending")
             self.assertEqual(events["thread-new"]["status"], "pending")
             self.assertEqual(events["thread-confirmed"]["status"], "pending")
-            self.assertEqual(
-                events["thread-rejected"]["sender"],
-                "Ana Silva <ana@example.com>",
-            )
-            self.assertIn(
-                "Remetente(s): Ana Silva <ana@example.com>",
-                events["thread-rejected"]["description"],
-            )
-            self.assertEqual(
-                datetime.fromisoformat(events["thread-rejected"]["starts_at"]).hour,
-                9,
-            )
-            inferred_fields = json.loads(
-                events["thread-rejected"]["inferred_fields"]
-            )
-            self.assertTrue(any("Data não informada" in item for item in inferred_fields))
-            self.assertTrue(any("Horário não informado" in item for item in inferred_fields))
+            self.assertEqual(events["thread-confirmed"]["pending_action"], "update")
+            self.assertEqual(events["thread-confirmed"]["previous_status"], "confirmed")
+            self.assertEqual(events["thread-rejected"]["title"], "Reunião rejected")
+            self.assertEqual(events["thread-rejected"]["sender"], "")
+            self.assertEqual(datetime.fromisoformat(events["thread-rejected"]["starts_at"]).hour, 10)
+            self.assertEqual(json.loads(events["thread-rejected"]["inferred_fields"]), [])
 
-    def test_cancelled_email_records_are_removed_instead_of_persisted(self):
+    def test_cancelled_email_records_are_preserved_until_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "cancelled.sqlite"
             gmail = MagicMock()
@@ -392,26 +381,23 @@ class AssistantTests(unittest.TestCase):
                     result = sync_google(date.today() - timedelta(days=1), date.today())
 
                 with connect() as connection:
-                    event_count = connection.execute(
+                    event = connection.execute(
                         """
-                        SELECT COUNT(*) FROM events
+                        SELECT status, pending_action, previous_status FROM events
                         WHERE source_ref = 'cancelled-meeting-thread'
                         """
-                    ).fetchone()[0]
-                    task_count = connection.execute(
+                    ).fetchone()
+                    task = connection.execute(
                         """
-                        SELECT COUNT(*) FROM tasks
-                        WHERE source_ref IN (
-                            'cancelled-meeting-thread',
-                            'email-deadline:cancelled-deadline-thread'
-                        )
+                        SELECT status, pending_action, previous_status FROM tasks
+                        WHERE source_ref = 'email-deadline:cancelled-deadline-thread'
                         """
-                    ).fetchone()[0]
+                    ).fetchone()
 
-            self.assertEqual(result["email_threads_with_events"], 0)
-            self.assertEqual(result["pending_items"], 0)
-            self.assertEqual(event_count, 0)
-            self.assertEqual(task_count, 0)
+            self.assertEqual(result["email_threads_with_events"], 2)
+            self.assertEqual(result["pending_items"], 2)
+            self.assertEqual(dict(event), {"status": "pending", "pending_action": "cancel", "previous_status": "pending"})
+            self.assertEqual(dict(task), {"status": "pending", "pending_action": "cancel", "previous_status": "pending"})
 
     def test_email_deadline_is_saved_as_task_without_meeting_duration(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -13,7 +13,7 @@ import {
     WarningIcon,
     type Icon,
 } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { formatDue, formatShortDay, formatTime, meetingEnd, type Person } from "../lib/format";
 import { useSetStatus } from "../lib/queries";
 import type { ApprovalItem, Meeting } from "../lib/types";
@@ -23,7 +23,9 @@ import { Button, IconButton, cn } from "./ui";
 export function useItemActions(item: ApprovalItem, onResolved?: () => void) {
     const toast = useToast();
     const mutation = useSetStatus((googleSynced, status) => {
-        if (status === "cancelled") toast("info", "Item descartado.");
+        if (status === "rejected") toast("info", "Alteração descartada; a decisão anterior foi mantida.");
+        else if (status === "cancelled")
+            toast("info", item.record.pending_action === "cancel" ? "Cancelamento confirmado." : "Item descartado.");
         else if (item.kind === "deadline" && googleSynced)
             toast("ok", "Tarefa adicionada ao Google Tasks.");
         else if (item.kind === "deadline")
@@ -40,6 +42,8 @@ export function useItemActions(item: ApprovalItem, onResolved?: () => void) {
     return {
         confirm: () => mutation.mutate({ item, status: "confirmed" }),
         discard: () => mutation.mutate({ item, status: "cancelled" }),
+        rejectChange: () => mutation.mutate({ item, status: "rejected" }),
+        confirmCancellation: () => mutation.mutate({ item, status: "cancelled" }),
         busy: mutation.isPending ? (mutation.variables?.status ?? null) : null,
         error: mutation.error?.message ?? null,
     };
@@ -61,7 +65,11 @@ export function ActionBar({
     onEdit: () => void;
 }) {
     const confirmLabel =
-        item.kind === "deadline"
+        item.record.pending_action === "cancel"
+            ? "Confirmar cancelamento"
+            : item.record.pending_action === "update"
+              ? "Confirmar alteração"
+              : item.kind === "deadline"
             ? tasksConnected
                 ? "Adicionar ao Google Tasks"
                 : "Confirmar prazo"
@@ -69,6 +77,8 @@ export function ActionBar({
               ? "Adicionar ao Calendar"
               : "Confirmar reunião";
     const busy = actions.busy !== null;
+    const [confirmingCancellation, setConfirmingCancellation] = useState(false);
+    const discard = item.record.pending_action ? actions.rejectChange : actions.discard;
 
     return (
         <div>
@@ -76,7 +86,11 @@ export function ActionBar({
                 <Button
                     variant="primary"
                     className="flex-1"
-                    onClick={actions.confirm}
+                    onClick={() =>
+                        item.record.pending_action === "cancel"
+                            ? setConfirmingCancellation(true)
+                            : actions.confirm()
+                    }
                     disabled={busy}
                 >
                     {actions.busy === "confirmed" ? (
@@ -91,14 +105,14 @@ export function ActionBar({
                 <IconButton
                     label="Editar"
                     onClick={onEdit}
-                    disabled={busy}
+                    disabled={busy || Boolean(item.record.pending_action)}
                     className="border border-line-strong"
                 >
                     <PencilSimpleIcon size={17} />
                 </IconButton>
                 <IconButton
-                    label="Descartar"
-                    onClick={actions.discard}
+                    label={item.record.pending_action ? "Manter decisão anterior" : "Descartar"}
+                    onClick={discard}
                     disabled={busy}
                     className="border border-line-strong hover:bg-danger-soft hover:text-danger"
                 >
@@ -113,6 +127,21 @@ export function ActionBar({
                 <p role="alert" className="mt-2 text-[12.5px] leading-snug text-danger">
                     {actions.error}
                 </p>
+            )}
+            {confirmingCancellation && (
+                <div className="absolute inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="cancel-title">
+                    <div className="w-full max-w-sm rounded-card bg-surface p-4 shadow-card">
+                        <h3 id="cancel-title" className="text-[15px] font-semibold">Confirmar cancelamento</h3>
+                        <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
+                            Você deseja realmente cancelar {item.kind === "meeting" ? "o evento" : "a tarefa"} <strong>{item.record.title}</strong>
+                            {item.kind === "meeting" ? `, agendado para ${formatShortDay(item.record.starts_at)}, às ${formatTime(item.record.starts_at)}` : ""}?
+                        </p>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <Button variant="secondary" onClick={() => setConfirmingCancellation(false)}>Voltar</Button>
+                            <Button variant="primary" onClick={() => { setConfirmingCancellation(false); actions.confirmCancellation(); }}>Confirmar cancelamento</Button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
