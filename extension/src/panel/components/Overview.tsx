@@ -147,6 +147,12 @@ function AttentionCard({
     );
 }
 
+export function scanSummary(result: SyncResult) {
+    const counts = result.diagnostics?.counts;
+    if (!counts) return `Última varredura: ${plural(result.emails, "e-mail analisado", "e-mails analisados")}, ${plural(result.email_threads_with_events, "item encontrado", "itens encontrados")}.`;
+    return `${plural(result.emails, "e-mail", "e-mails")} em ${plural(result.threads ?? 0, "conversa", "conversas")}: ${plural(counts.identified_meetings ?? 0, "reunião", "reuniões")} e ${plural(counts.identified_tasks ?? 0, "tarefa", "tarefas")} identificadas; ${plural(result.pending_items, "nova pendência", "novas pendências")}.`;
+}
+
 function ScanCard({
     connected,
     syncing,
@@ -170,7 +176,7 @@ function ScanCard({
                         {syncing
                             ? "Lendo as mensagens e identificando compromissos. Pode levar alguns minutos."
                             : lastSync
-                              ? `Última varredura: ${plural(lastSync.emails, "e-mail analisado", "e-mails analisados")}, ${plural(lastSync.email_threads_with_events, "item encontrado", "itens encontrados")}.`
+                              ? scanSummary(lastSync)
                               : "A EunomIA procura reuniões e prazos nos e-mails do período que você escolher."}
                     </p>
                 </div>

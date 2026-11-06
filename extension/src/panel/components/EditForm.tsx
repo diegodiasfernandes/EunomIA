@@ -84,12 +84,17 @@ export function EditForm({ item, onDone }: { item: ApprovalItem; onDone: () => v
         };
 
         if (item.kind === "meeting") {
-            const start = new Date(draft.startsAt);
+            const start = new Date(item.record.all_day ? `${draft.startsAt.slice(0, 10)}T00:00:00` : draft.startsAt);
             const minutes = Number(draft.duration);
             if (Number.isNaN(start.getTime()))
                 return setLocalError("Informe a data e o horário de início.");
             if (!Number.isFinite(minutes) || minutes < 15)
                 return setLocalError("A duração mínima é de 15 minutos.");
+            if (item.record.all_day && (minutes < 1440 || minutes % 1440 !== 0))
+                return setLocalError("Informe uma quantidade inteira de dias.");
+            const end = new Date(start);
+            if (item.record.all_day) end.setDate(start.getDate() + minutes / 1440);
+            else end.setTime(start.getTime() + minutes * 60_000);
             edit.mutate(
                 {
                     kind: "meeting",
@@ -98,7 +103,7 @@ export function EditForm({ item, onDone }: { item: ApprovalItem; onDone: () => v
                         title,
                         description: draft.description,
                         starts_at: start.toISOString(),
-                        ends_at: new Date(start.getTime() + minutes * 60_000).toISOString(),
+                        ends_at: end.toISOString(),
                         location: draft.location.trim(),
                     },
                 },
@@ -147,25 +152,25 @@ export function EditForm({ item, onDone }: { item: ApprovalItem; onDone: () => v
                                 {(id) => (
                                     <input
                                         id={id}
-                                        type="datetime-local"
+                                        type={item.record.all_day ? "date" : "datetime-local"}
                                         className="field"
-                                        value={draft.startsAt}
+                                        value={item.record.all_day ? draft.startsAt.slice(0, 10) : draft.startsAt}
                                         onChange={set("startsAt")}
                                         required
                                     />
                                 )}
                             </Field>
-                            <Field label="Duração (min)">
+                            <Field label={item.record.all_day ? "Duração (dias)" : "Duração (min)"}>
                                 {(id) => (
                                     <input
                                         id={id}
                                         type="number"
-                                        min={15}
-                                        step={5}
+                                        min={item.record.all_day ? 1 : 15}
+                                        step={item.record.all_day ? 1 : 5}
                                         inputMode="numeric"
                                         className="field tabular-nums"
-                                        value={draft.duration}
-                                        onChange={set("duration")}
+                                        value={item.record.all_day ? Math.round(Number(draft.duration) / 1440) : draft.duration}
+                                        onChange={item.record.all_day ? (event) => setDraft((current) => ({ ...current, duration: String(Number(event.target.value) * 1440) })) : set("duration")}
                                     />
                                 )}
                             </Field>

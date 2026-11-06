@@ -65,18 +65,18 @@ export function useWorkspace() {
 
         const approvals: ApprovalItem[] = [
             ...meetings
-                .filter((m) => isOpenStatus(m.status))
+                .filter((m) => isOpenStatus(m.status) && meetingEnd(m).getTime() > now)
                 .map((record) => ({ kind: "meeting" as const, record })),
             ...tasks
                 .filter((t) => isOpenStatus(t.status))
                 .map((record) => ({ kind: "deadline" as const, record })),
         ].sort((a, b) => byDateAsc(itemDate(a), itemDate(b)));
 
-        const active = meetings.filter((m) => m.status !== "cancelled" && m.status !== "rejected");
+        const active = meetings.filter((m) => !["cancelled", "rejected", "expired", "dismissed"].includes(m.status));
         const upcoming = active
             .filter((m) => meetingEnd(m).getTime() >= now)
             .sort((a, b) => byDateAsc(a.starts_at, b.starts_at));
-        const conflicts = active.filter((m) => m.conflict);
+        const conflicts = active.filter((m) => m.conflict && meetingEnd(m).getTime() > now);
         const history: ApprovalItem[] = meetings
             .filter(
                 (m) =>

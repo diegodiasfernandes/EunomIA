@@ -47,7 +47,7 @@ def move_workspace(connection, source: str, target: str):
             "UPDATE emails SET provider_id = substr(provider_id, ?) WHERE user_id=? AND provider_id LIKE ?",
             (len(source) + 2, source, source + ":%"),
         )
-    for table in ("events", "tasks", "emails", "decision_history"):
+    for table in ("events", "tasks", "emails", "decision_history", "email_scan_state", "email_scan_items"):
         connection.execute(f"UPDATE {table} SET user_id=? WHERE user_id=?", (target, source))
 
 

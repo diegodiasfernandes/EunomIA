@@ -78,6 +78,7 @@ export function ActionBar({
               : "Confirmar reunião";
     const busy = actions.busy !== null;
     const [confirmingCancellation, setConfirmingCancellation] = useState(false);
+    const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
     const discard = item.record.pending_action ? actions.rejectChange : actions.discard;
 
     return (
@@ -89,9 +90,10 @@ export function ActionBar({
                     onClick={() =>
                         item.record.pending_action === "cancel"
                             ? setConfirmingCancellation(true)
-                            : actions.confirm()
+                            : item.kind === "meeting" && item.record.possible_duplicate
+                              ? setConfirmingDuplicate(true) : actions.confirm()
                     }
-                    disabled={busy}
+                    disabled={busy || (item.kind === "meeting" && item.record.review_only)}
                 >
                     {actions.busy === "confirmed" ? (
                         <ArrowsClockwiseIcon size={16} className="motion-safe:animate-spin" />
@@ -128,13 +130,27 @@ export function ActionBar({
                     {actions.error}
                 </p>
             )}
+            {item.kind === "meeting" && item.record.possible_duplicate && <div className="mt-2 rounded-control bg-warn-soft p-3 text-[12px] text-warn" role="status">
+                <p className="font-semibold">Possível duplicidade — revise antes de confirmar</p>
+                {item.record.review_only && <p>O cancelamento não pôde ser associado com segurança. Confira o evento no Google Agenda.</p>}
+                {item.record.duplicate_candidates?.map((candidate, index) => <p key={index} className="mt-1">
+                    {candidate.title} · {formatDue(candidate.starts_at)}
+                    {candidate.url?.startsWith("https://") && <> · <a href={candidate.url} target="_blank" rel="noopener noreferrer" className="underline">Conferir no Google</a></>}
+                </p>)}
+            </div>}
+            {confirmingDuplicate && <div className="absolute inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="duplicate-title">
+                <div className="rounded-card bg-surface p-4 shadow-card"><h3 id="duplicate-title" className="font-semibold">Possível duplicidade</h3>
+                    <p className="mt-2 text-[13px]">Confira as correspondências indicadas. Deseja confirmar esta pendência mesmo assim?</p>
+                    <div className="mt-4 flex gap-2"><Button onClick={() => setConfirmingDuplicate(false)}>Voltar</Button><Button onClick={() => { setConfirmingDuplicate(false); actions.confirm(); }}>Confirmar mesmo assim</Button></div>
+                </div>
+            </div>}
             {confirmingCancellation && (
                 <div className="absolute inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="cancel-title">
                     <div className="w-full max-w-sm rounded-card bg-surface p-4 shadow-card">
                         <h3 id="cancel-title" className="text-[15px] font-semibold">Confirmar cancelamento</h3>
                         <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
                             Você deseja realmente cancelar {item.kind === "meeting" ? "o evento" : "a tarefa"} <strong>{item.record.title}</strong>
-                            {item.kind === "meeting" ? `, agendado para ${formatShortDay(item.record.starts_at)}, às ${formatTime(item.record.starts_at)}` : ""}?
+                            {item.kind === "meeting" ? `, agendado para ${formatShortDay(item.record.starts_at)}, ${item.record.all_day ? "dia inteiro" : `às ${formatTime(item.record.starts_at)}`}` : ""}?
                         </p>
                         <div className="mt-4 flex justify-end gap-2">
                             <Button variant="secondary" onClick={() => setConfirmingCancellation(false)}>Voltar</Button>
@@ -168,8 +184,7 @@ export function ItemMeta({ item, className }: { item: ApprovalItem; className?: 
             <div className={base}>
                 <MetaItem icon={CalendarBlankIcon}>{formatShortDay(meeting.starts_at)}</MetaItem>
                 <MetaItem icon={ClockIcon}>
-                    {formatTime(meeting.starts_at)} -{" "}
-                    {formatTime(meetingEnd(meeting).toISOString())}
+                    {meeting.all_day ? "Dia inteiro" : `${formatTime(meeting.starts_at)} - ${formatTime(meetingEnd(meeting).toISOString())}`}
                 </MetaItem>
                 {meeting.location && <MetaItem icon={MapPinIcon}>{meeting.location}</MetaItem>}
             </div>

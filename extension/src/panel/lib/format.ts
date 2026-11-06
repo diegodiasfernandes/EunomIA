@@ -97,6 +97,8 @@ export function cleanDescription(description: string) {
 export const isOpenStatus = (status: RecordStatus) => status === "pending" || status === "detected";
 
 export const STATUS_LABEL: Record<RecordStatus, string> = {
+    expired: "Encerrado",
+    dismissed: "Já registrado",
     pending: "Aguardando aprovação",
     detected: "Aguardando aprovação",
     confirmed: "Confirmado",

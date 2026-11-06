@@ -1,4 +1,4 @@
-export type RecordStatus = "pending" | "detected" | "confirmed" | "cancelled" | "rejected" | "done";
+export type RecordStatus = "pending" | "detected" | "confirmed" | "cancelled" | "rejected" | "done" | "expired" | "dismissed";
 
 export type RecordSource = "email" | "manual" | (string & {});
 
@@ -26,6 +26,10 @@ export interface Meeting {
     link: string | null;
     participants: string[];
     calendar_synced: boolean;
+    all_day?: boolean;
+    possible_duplicate?: boolean;
+    review_only?: boolean;
+    duplicate_candidates?: { title: string; starts_at: string; ends_at: string; url?: string | null }[];
     inferred_fields: string[];
     conflict: boolean;
     conflicts_with: MeetingConflict[];
@@ -116,6 +120,8 @@ export interface SyncRange {
 
 export interface SyncResult {
     emails: number;
+    threads?: number;
+    diagnostics?: { scan_id: string; counts: Record<string, number> };
     email_threads_with_events: number;
     pending_items: number;
 }

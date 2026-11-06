@@ -129,11 +129,10 @@ export function DetailSheet({
                                 <>
                                     <Row icon={CalendarBlankIcon} label="Quando">
                                         {dayLabel(item.record.starts_at)},{" "}
-                                        {formatTime(item.record.starts_at)} -{" "}
-                                        {formatTime(meetingEnd(item.record).toISOString())}
+                                        {item.record.all_day ? "Dia inteiro" : `${formatTime(item.record.starts_at)} - ${formatTime(meetingEnd(item.record).toISOString())}`}
                                         <span className="text-ink-3">
                                             {" "}
-                                            ({formatDuration(meetingMinutes(item.record))})
+                                            {!item.record.all_day && `(${formatDuration(meetingMinutes(item.record))})`}
                                         </span>
                                     </Row>
                                     <Row icon={MapPinIcon} label="Local">

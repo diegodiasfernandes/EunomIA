@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
 from .account_session import account_operation, expected_connection
+from .mail_scan import scan_timezone
 from .google_accounts import AccountChangedError, disconnect_google
 from .calendar_agenda import AgendaAuthorizationError, list_agenda
 from .assistant import GeminiUnavailableError, generate_natural_response
@@ -55,8 +56,8 @@ app.add_middleware(
 
 
 class GoogleSyncRequest(BaseModel):
-    email_since: date = Field(default_factory=lambda: date.today() - timedelta(days=30))
-    email_until: date = Field(default_factory=date.today)
+    email_since: date = Field(default_factory=lambda: datetime.now(scan_timezone()).date() - timedelta(days=30))
+    email_until: date = Field(default_factory=lambda: datetime.now(scan_timezone()).date())
 
 
 class ChatRequest(BaseModel):
@@ -200,7 +201,8 @@ def events():
             """
             SELECT id, title, description, starts_at, ends_at, location,
                    sender, status, source, provider_id, inferred_fields,
-                   pending_action, pending_payload, previous_status
+                   pending_action, pending_payload, previous_status, all_day,
+                   participants_json, duplicate_candidates_json, review_only
             FROM events
             WHERE user_id = 'demo'
             ORDER BY starts_at
@@ -221,6 +223,11 @@ def events():
             pending_action=row["pending_action"],
             previous_status=row["previous_status"],
             calendar_synced=bool(row["provider_id"]),
+            all_day=bool(json.loads(row["pending_payload"]).get("all_day", row["all_day"]) if row["pending_action"] == "update" else row["all_day"]),
+            participants=json.loads((json.loads(row["pending_payload"]).get("participants_json", row["participants_json"]) if row["pending_action"] == "update" else row["participants_json"]) or "[]"),
+            possible_duplicate=bool(json.loads((json.loads(row["pending_payload"]).get("duplicate_candidates_json", row["duplicate_candidates_json"]) if row["pending_action"] == "update" else row["duplicate_candidates_json"]) or "[]")),
+            duplicate_candidates=json.loads((json.loads(row["pending_payload"]).get("duplicate_candidates_json", row["duplicate_candidates_json"]) if row["pending_action"] == "update" else row["duplicate_candidates_json"]) or "[]"),
+            review_only=bool(json.loads(row["pending_payload"]).get("review_only", row["review_only"]) if row["pending_action"] == "update" else row["review_only"]),
             inferred_fields=json.loads(row["inferred_fields"] or "[]"),
         )
         for row in rows
@@ -263,7 +270,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                 if request.status != "cancelled":
                     raise HTTPException(status_code=422, detail="Confirme o cancelamento explicitamente.")
                 try:
-                    delete_calendar_event(staged["provider_id"])
+                    delete_calendar_event(staged["provider_id"], **({"calendar_id": staged["provider_calendar_id"]} if staged["provider_calendar_id"] != "primary" else {}))
                 except (HttpError, GoogleAuthError, OSError) as error:
                     raise HTTPException(status_code=502, detail=f"Não foi possível cancelar no Google Calendar: {error}") from error
                 connection.execute(
@@ -279,6 +286,8 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                     staged["provider_id"], title=payload["title"],
                     description=payload["description"], starts_at=datetime.fromisoformat(payload["starts_at"]),
                     ends_at=datetime.fromisoformat(payload["ends_at"]), location=payload["location"],
+                    all_day=bool(payload.get("all_day", staged["all_day"])),
+                    calendar_id=staged["provider_calendar_id"],
                 )
             except (HttpError, GoogleAuthError, OSError) as error:
                 raise HTTPException(status_code=502, detail=f"Não foi possível atualizar o Google Calendar: {error}") from error
@@ -291,6 +300,10 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                  payload["location"], payload["sender"], payload["preparation"], payload["inferred_fields"],
                  previous, datetime.now(ZoneInfo("America/Fortaleza")).isoformat(), str(event_id)),
             )
+            connection.execute("UPDATE events SET all_day=? WHERE id=?", (bool(payload.get("all_day", staged["all_day"])), str(event_id)))
+            if "participants_json" in payload:
+                connection.execute("UPDATE events SET participants_json=? WHERE id=?", (payload["participants_json"], str(event_id)))
+            connection.execute("UPDATE events SET duplicate_candidates_json='[]',review_only=0 WHERE id=?", (str(event_id),))
             _audit_decision(connection, "meeting", str(event_id), "change_confirmed", "pending", previous)
             return {"id": str(event_id), "status": previous, "calendar_synced": bool(staged["provider_id"])}
 
@@ -370,7 +383,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
         if request.status == "confirmed":
             event = connection.execute(
                 """
-                SELECT id, title, description, starts_at, ends_at, location
+                SELECT id, title, description, starts_at, ends_at, location, all_day, review_only
                 FROM events
                 WHERE id = ? AND user_id = 'demo'
                   AND status IN ('pending', 'detected')
@@ -382,6 +395,10 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                     status_code=409,
                     detail="Este compromisso não pode ser confirmado neste estado.",
                 )
+            if datetime.fromisoformat(event["ends_at"]) <= datetime.now(ZoneInfo("UTC")):
+                raise HTTPException(status_code=409, detail="Este compromisso já terminou. Atualize a varredura antes de continuar.")
+            if event["review_only"]:
+                raise HTTPException(status_code=409, detail="Confira a possível correspondência no Google Agenda. Nenhum evento será criado automaticamente para este cancelamento ambíguo.")
 
             blocking = connection.execute(
                 """
@@ -409,6 +426,7 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                     starts_at=datetime.fromisoformat(event["starts_at"]),
                     ends_at=datetime.fromisoformat(event["ends_at"]),
                     location=event["location"],
+                    all_day=bool(event["all_day"]),
                 )
             except ValueError as error:
                 raise HTTPException(status_code=400, detail=str(error)) from error
@@ -421,7 +439,8 @@ def review_event(event_id: UUID, request: EventReviewRequest):
             result = connection.execute(
                 """
                 UPDATE events
-                SET status = 'confirmed', provider_id = COALESCE(?, provider_id), updated_at = ?
+                SET status = 'confirmed', provider_id = COALESCE(?, provider_id), updated_at = ?,
+                    duplicate_candidates_json='[]', review_only=0
                 WHERE id = ? AND user_id = 'demo'
                   AND status IN ('pending', 'detected')
                 """,
@@ -983,7 +1002,7 @@ def google_sync(request: GoogleSyncRequest | None = None):
             status_code=422,
             detail="A data inicial deve ser anterior ou igual à data final.",
         )
-    if request.email_until > date.today():
+    if request.email_until > datetime.now(scan_timezone()).date():
         raise HTTPException(status_code=422, detail="A data final não pode ser futura.")
     try:
         result = sync_google(request.email_since, request.email_until)

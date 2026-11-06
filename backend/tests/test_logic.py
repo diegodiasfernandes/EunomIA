@@ -33,6 +33,22 @@ def make_meeting(
 
 
 class AssistantTests(unittest.TestCase):
+    def configure_full_threads(self, gmail):
+        getter = gmail.users.return_value.messages.return_value.get
+        executor = getter.return_value.execute
+        items = list(executor.side_effect) if executor.side_effect is not None else [executor.return_value]
+        indexed = {item["id"]: item for item in items}
+        executor.side_effect = lambda: indexed[getter.call_args.kwargs["id"]]
+        threads = gmail.users.return_value.threads.return_value.get
+        threads.return_value.execute.side_effect = lambda: {
+            "messages": [item for item in items if item["threadId"] == threads.call_args.kwargs["id"]]
+        }
+
+    def setUp(self):
+        calendar = patch("app.google_integration.CalendarLookup")
+        calendar.start().return_value.matching.return_value = False
+        self.addCleanup(calendar.stop)
+
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
     @patch("app.assistant.urllib.request.urlopen")
     def test_returns_natural_response_from_gemini(self, urlopen):
@@ -218,6 +234,7 @@ class AssistantTests(unittest.TestCase):
                 "duration_minutes": 0,
             }
 
+            self.configure_full_threads(gmail)
             with patch("app.db.database_path", return_value=database):
                 initialize_database()
                 with connect() as connection:
@@ -255,9 +272,9 @@ class AssistantTests(unittest.TestCase):
                         "app.google_integration.generate_structured_response",
                         side_effect=[
                             extracted_without_schedule,
-                            extracted_event,
-                            extracted_event,
-                            extracted_event,
+                            {**extracted_event, "title": "Reunião pendente", "record_key": "thread-pending"},
+                            {**extracted_event, "title": "Reunião nova"},
+                            {**extracted_event, "title": "Reunião confirmada atualizada", "record_key": "thread-confirmed"},
                         ],
                     ),
                 ):
@@ -340,6 +357,7 @@ class AssistantTests(unittest.TestCase):
                 "deadline_reference": "",
             }
 
+            self.configure_full_threads(gmail)
             with patch("app.db.database_path", return_value=database):
                 initialize_database()
                 with connect() as connection:
@@ -429,6 +447,7 @@ class AssistantTests(unittest.TestCase):
                 "cancelled": False,
             }
 
+            self.configure_full_threads(gmail)
             with patch("app.db.database_path", return_value=database):
                 initialize_database()
                 with (

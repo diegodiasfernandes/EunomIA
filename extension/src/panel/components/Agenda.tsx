@@ -47,10 +47,10 @@ export function MeetingRow({ meeting, onOpen }: { meeting: Meeting; onOpen: () =
                         muted ? "text-ink-3" : "text-ink",
                     )}
                 >
-                    {formatTime(meeting.starts_at)}
+                    {meeting.all_day ? "Dia inteiro" : formatTime(meeting.starts_at)}
                 </span>
                 <span className="block text-[11.5px] text-ink-3">
-                    {formatDuration(meetingMinutes(meeting))}
+                    {!meeting.all_day && formatDuration(meetingMinutes(meeting))}
                 </span>
             </span>
             <span className="min-w-0 flex-1">

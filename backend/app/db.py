@@ -142,6 +142,17 @@ def initialize_database():
         integration_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(integrations)")
         }
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS email_scan_state (
+                user_id TEXT NOT NULL REFERENCES users(id), thread_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL, records_json TEXT NOT NULL,
+                PRIMARY KEY(user_id, thread_id)
+            );
+            CREATE TABLE IF NOT EXISTS email_scan_items (
+                user_id TEXT NOT NULL REFERENCES users(id), fingerprint TEXT NOT NULL,
+                PRIMARY KEY(user_id, fingerprint)
+            );
+        """)
         for column in ("account_name", "connection_id"):
             if column not in integration_columns:
                 connection.execute(f"ALTER TABLE integrations ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
@@ -213,6 +224,16 @@ def initialize_database():
             connection.execute(
                 "ALTER TABLE events ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
             )
+        if "all_day" not in event_columns:
+            connection.execute("ALTER TABLE events ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0")
+        for column, definition in {
+            "participants_json": "TEXT NOT NULL DEFAULT '[]'",
+            "provider_calendar_id": "TEXT NOT NULL DEFAULT 'primary'",
+            "duplicate_candidates_json": "TEXT NOT NULL DEFAULT '[]'",
+            "review_only": "INTEGER NOT NULL DEFAULT 0",
+        }.items():
+            if column not in event_columns:
+                connection.execute(f"ALTER TABLE events ADD COLUMN {column} {definition}")
         for column in ("pending_action", "pending_payload", "previous_status"):
             if column not in event_columns:
                 connection.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT")

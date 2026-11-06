@@ -28,6 +28,10 @@ class MeetingRecord(BaseModel):
     link: str | None = None
     participants: list[str] = Field(default_factory=list)
     calendar_synced: bool = False
+    all_day: bool = False
+    possible_duplicate: bool = False
+    duplicate_candidates: list[dict] = Field(default_factory=list)
+    review_only: bool = False
     inferred_fields: list[str] = Field(default_factory=list)
     conflict: bool = False
     conflicts_with: list[MeetingConflict] = Field(default_factory=list)

@@ -147,10 +147,40 @@ Somente eventos reais, não cancelados ou recusados, são exibidos. O ID do Goog
 
 Preencha `GEMINI_API_KEY` em `backend/.env` para extrair compromissos das threads importadas do Gmail e habilitar respostas do assistente. `app.assistant` oferece duas funções: `generate_natural_response(prompt)` e `generate_structured_response(prompt, response_structure)`.
 
+## Relevância e duplicidades na varredura
+
+A busca percorre todas as páginas do Gmail e carrega a conversa completa de cada thread encontrada no período. Mensagens anteriores ou posteriores ao intervalo são usadas como contexto para identificar a decisão mais recente de cada reunião e tarefa. Corpos HTML e convites `text/calendar` também são lidos. A extração retorna vários registros independentes por conversa e reutiliza os identificadores dos itens conhecidos em reagendamentos e cancelamentos.
+
+O fuso da varredura é `America/Sao_Paulo`; pode ser configurado com `USER_TIMEZONE` (nome IANA) no ambiente do backend. A pesquisa no Gmail usa timestamps para respeitar esse fuso. Reuniões sem data ou horário explícitos não geram sugestões. Reuniões encerradas não entram em aprovação; novas reuniões com horário já iniciado também são ignoradas. Eventos de dia inteiro permanecem elegíveis até sua data de encerramento exclusiva e são enviados ao Google usando campos de data, após aprovação.
+
+Antes de criar uma sugestão, a aplicação compara título normalizado, instante de início e encerramento com os registros locais, decisões preservadas e calendários Google autorizados. Convites com UID verificável permitem reconhecer um evento renomeado no Calendar. Quando a duração não foi informada, a comparação não trata a duração estimada como uma mudança real. Se a consulta ao Calendar falhar, a varredura retorna erro e não confirma novas pendências sem essa verificação. Pode ser necessário reconectar contas antigas para conceder a leitura da lista de calendários.
+
+Tarefas vencidas continuam relevantes enquanto pendentes. Uma conclusão explícita por e-mail encerra somente tarefas locais ainda não aprovadas, sem alterar o Google Tasks. Cancelamentos e reagendamentos de itens aprovados continuam sujeitos à confirmação do usuário. Mensagens repetidas reutilizam a extração em cache e não reabrem decisões por alterações cosméticas no texto ou remetente.
+
+Sugestões antigas de reuniões já encerradas são preservadas no histórico como **Encerrado**, e sugestões que já constam no Google como **Já registrado**. Nada é apagado no Google. O cache e as identificações de itens processados acompanham o isolamento por conta. A resposta de `POST /api/integrations/google/sync` inclui contadores `skipped` para reuniões passadas, em andamento, duplicidades e dados de agenda insuficientes.
+
+A comparação com o Calendar distingue correspondência exata, atualização comprovada e possível duplicidade. Considera horários e duração, participantes disponíveis, ID do evento/calendário e UID do convite. Títulos semelhantes ou participantes incompatíveis não causam descarte automático: a pendência recebe um alerta de revisão. IDs de séries recorrentes não são tratados como se identificassem qualquer ocorrência.
+
+Reagendamentos e cancelamentos comprovados de eventos externos preservam o ID e o calendário de origem e exigem confirmação; não criam um segundo evento no calendário principal. Eventos externos vinculados continuam identificados como **Google**. Cancelamentos ambíguos ficam disponíveis para conferência, com criação automática bloqueada. Propostas antigas já encerradas restauram a decisão anterior quando possível, sem excluir o evento nem perder o histórico da proposta.
+
+Horários extraídos em `HH:MM` e `HH:MM:SS` são aceitos tanto para reuniões quanto para tarefas. Respostas incompletas do Gemini (`MAX_TOKENS` ou bloqueio) são reportadas como erro, sem gravar uma extração parcial no cache.
+
+### Diagnóstico da varredura
+
+A resposta de sincronização inclui `threads` e `diagnostics`: um `scan_id` aleatório e contadores de páginas, mensagens selecionadas, mensagens de contexto, threads, reuniões/tarefas identificadas, cache, requisições/repetições/limites do Gemini, comparação com o Calendar e novas pendências. O resumo da extensão distingue itens identificados de pendências novas: repetir uma varredura pode identificar os mesmos itens e criar zero pendências.
+
+O backend registra linhas `scan_diagnostic` com etapas `gmail`, `extraction`, `gemini`, `matching`, `decision`, `persistence` e `scan`. Registra apenas códigos de motivo, posições sequenciais no processamento e contagens. Não inclui assunto, corpo, endereços, identificadores do Gmail/Calendar, prompts, tokens, credenciais ou URLs de requisição. Exemplo:
+
+```json
+{"scan_id":"identificador-aleatorio", "stage":"decision", "reason":"missing_or_invalid_schedule", "item":2}
+```
+
+Após alterar o código, reinicie a instância correta da API e recarregue `extension/dist` no Chrome. Outra cópia da EunomIA ocupando a porta 8000 ou um backend iniciado sem `--reload` continuará atendendo com a versão anterior.
+
 ## Organização da lógica
 
 - `app.main` registra os endpoints de chat, agenda local, tarefas, OAuth e sincronização do Gmail.
-- `app.google_integration` lê mensagens do Gmail, registra os remetentes e classifica cada thread como reunião, prazo ou irrelevante. Reuniões recebem valores padrão para dados essenciais ausentes; prazos são salvos como tarefas sem duração, com prazo mantido vazio se não houver data ou referência. Reuniões e prazos ativos entram diretamente em Pendências, sem uma etapa separada de revisão; uma nova varredura reabre o item existente como pendente, enquanto cancelamentos removem os registros correspondentes.
+- `app.google_integration` aplica as decisões da extração por item; `app.mail_scan` carrega o contexto completo do Gmail e verifica o Google Calendar. Reuniões precisam de data e horário explícitos (exceto o horário em eventos de dia inteiro). Prazos são tarefas sem duração. Novas varreduras preservam decisões e somente propõem alterações relevantes; cancelamentos de registros existentes aguardam confirmação, sem exclusão automática no Google.
 - Em Pendências, reuniões e prazos podem ser abertos para ver detalhes, editados, confirmados ou cancelados. A confirmação de uma reunião cria um evento no Google Calendar e a confirmação de um prazo cria uma tarefa no Google Tasks, quando a conta estiver autorizada. Os remetentes dos e-mails aparecem nos detalhes e na descrição dos registros.
 - `app.features.conflict_management.identify_conflicts` recebe e retorna a mesma lista de `MeetingRecord`, preenchendo `conflict` e `conflicts_with`. Para reuniões sem duração, considera uma estimativa de 60 minutos e classifica a sobreposição como possível.
 - `app.models` contém estruturas distintas para reuniões e prazos de tarefas.

@@ -51,9 +51,9 @@ def list_agenda(start_day: date | None = None) -> dict:
     service = build("calendar", "v3", credentials=credentials)
     with connect() as connection:
         links = {
-            row["provider_id"]: dict(row)
+            (dict(row).get("provider_calendar_id", "primary"), row["provider_id"]): dict(row)
             for row in connection.execute(
-                "SELECT id, provider_id, status, previous_status FROM events "
+                "SELECT id, provider_id, status, previous_status, source, provider_calendar_id FROM events "
                 "WHERE user_id = 'demo' AND provider_id IS NOT NULL"
             ).fetchall()
         }
@@ -91,7 +91,9 @@ def list_agenda(start_day: date | None = None) -> dict:
                           if all_day else datetime.fromisoformat(ends_at))
                 if end_dt <= lower or start_dt >= upper:
                     continue
-                linked = (links.get(event["id"]) or links.get(event.get("recurringEventId"))) if calendar.get("primary") else None
+                linked = links.get((calendar_id, event["id"])) or links.get((calendar_id, event.get("recurringEventId")))
+                if linked is None and calendar.get("primary"):
+                    linked = links.get(("primary", event["id"])) or links.get(("primary", event.get("recurringEventId")))
                 if linked and (linked["status"] in {"cancelled", "rejected"} or
                                (linked["status"] != "confirmed" and linked["previous_status"] != "confirmed")):
                     continue
@@ -100,7 +102,7 @@ def list_agenda(start_day: date | None = None) -> dict:
                 events[key] = {
                     "id": key, "google_event_id": event["id"],
                     "local_id": linked["id"] if linked else None,
-                    "origin": "eunomia" if linked else "google",
+                    "origin": "eunomia" if linked and linked.get("source") != "calendar" else "google",
                     "title": event.get("summary") or "Sem título",
                     "description": event.get("description", ""),
                     "starts_at": starts_at, "ends_at": ends_at, "all_day": all_day,

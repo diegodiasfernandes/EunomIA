@@ -85,7 +85,7 @@ export function ScanSheet({
                             Varrer e-mails
                         </h2>
                         <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-3">
-                            A EunomIA lê até 50 e-mails do período e envia as reuniões e prazos
+                            A EunomIA analisa as conversas do período e envia novas reuniões e tarefas
                             encontrados para Aprovações.
                         </p>
                     </div>

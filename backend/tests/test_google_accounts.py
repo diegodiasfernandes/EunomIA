@@ -59,6 +59,8 @@ class GoogleAccountsTests(unittest.TestCase):
             connection.execute("INSERT INTO emails(id,user_id,provider_id,conversation_id,subject,received_at) VALUES (?,'demo','same-message-id','same-thread',?,'2026-11-05')", (email_id, label))
             connection.execute("INSERT INTO email_events(email_id,event_id) VALUES (?,?)", (email_id,event_id))
             connection.execute("INSERT INTO decision_history(user_id,record_type,record_id,action,created_at) VALUES ('demo','meeting',?,'confirmed','2026-11-05')", (event_id,))
+            connection.execute("INSERT INTO email_scan_state VALUES ('demo','same-thread','hash','[]')")
+            connection.execute("INSERT INTO email_scan_items VALUES ('demo','same-fingerprint')")
         return event_id,task_id,email_id
 
     def test_disconnect_removes_tokens_and_states_but_preserves_account_records(self):
@@ -78,7 +80,7 @@ class GoogleAccountsTests(unittest.TestCase):
         with connect() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM integrations").fetchone()[0],0)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM oauth_states").fetchone()[0],0)
-            for table in ("events","tasks","emails","decision_history"):
+            for table in ("events","tasks","emails","decision_history","email_scan_state","email_scan_items"):
                 self.assertEqual(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id=?",(archive_id("a@example.test"),)).fetchone()[0],1)
             self.assertIsNotNone(connection.execute("SELECT * FROM email_events WHERE event_id=?",(ids[0],)).fetchone())
 
