@@ -172,5 +172,5 @@ export function useSyncEmails() {
 }
 
 export function useChat() {
-    return useMutation({ mutationFn: (message: string) => api.chat(message) });
+    return useMutation({ mutationFn: ({ message, history }: { message: string; history: string[] }) => api.chat(message, history) });
 }

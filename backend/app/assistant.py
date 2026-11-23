@@ -44,15 +44,12 @@ def generate_natural_response(prompt: str) -> str:
         raise LookupError("GEMINI_API_KEY não configurada")
 
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={api_key}"
-    )
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" + f"{model}:generateContent"
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     try:
@@ -78,10 +75,7 @@ def generate_structured_response(prompt: str, response_structure: dict) -> dict:
         raise LookupError("GEMINI_API_KEY não configurada")
 
     model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={api_key}"
-    )
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" + f"{model}:generateContent"
     body = json.dumps(
         {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -94,7 +88,7 @@ def generate_structured_response(prompt: str, response_structure: dict) -> dict:
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     try:

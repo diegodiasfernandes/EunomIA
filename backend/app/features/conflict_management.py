@@ -34,10 +34,12 @@ def identify_conflicts(meetings: list[MeetingRecord]) -> list[MeetingRecord]:
                 else DEFAULT_UNKNOWN_MEETING_DURATION_MINUTES
             )
             if duration <= 0:
-                raise ValueError("A duração de uma reunião deve ser positiva.")
+                # A malformed imported record must not make the whole agenda unavailable.
+                continue
             end = start + timedelta(minutes=duration)
         if end <= start:
-            raise ValueError("O fim da reunião deve ser posterior ao início.")
+            # Keep the record visible, without conflicts, so it can be corrected or removed.
+            continue
 
         intervals[meeting.id] = (start, end, duration_known)
 

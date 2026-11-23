@@ -62,6 +62,7 @@ class GoogleSyncRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
+    history: list[str] = Field(default_factory=list, max_length=10)
 
 
 class EventConfirmationRequest(BaseModel):
@@ -380,6 +381,32 @@ def review_event(event_id: UUID, request: EventReviewRequest):
 
         if request.status is None:
             raise HTTPException(status_code=422, detail="Informe o novo status.")
+        if request.status == "cancelled":
+            event = connection.execute(
+                """SELECT provider_id, provider_calendar_id, status FROM events
+                   WHERE id = ? AND user_id = 'demo' AND status = 'confirmed'""",
+                (str(event_id),),
+            ).fetchone()
+            if event is not None:
+                if event["provider_id"]:
+                    try:
+                        delete_calendar_event(
+                            event["provider_id"],
+                            **({"calendar_id": event["provider_calendar_id"]}
+                               if event["provider_calendar_id"] != "primary" else {}),
+                        )
+                    except (HttpError, GoogleAuthError, OSError) as error:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Não foi possível cancelar no Google Calendar: {error}",
+                        ) from error
+                connection.execute(
+                    """UPDATE events SET status='cancelled', updated_at=?
+                       WHERE id=? AND user_id='demo' AND status='confirmed'""",
+                    (datetime.now(ZoneInfo("America/Fortaleza")).isoformat(), str(event_id)),
+                )
+                _audit_decision(connection, "meeting", str(event_id), "cancelled", "confirmed", "cancelled")
+                return {"id": str(event_id), "status": "cancelled", "calendar_synced": bool(event["provider_id"])}
         if request.status == "confirmed":
             event = connection.execute(
                 """
@@ -400,15 +427,22 @@ def review_event(event_id: UUID, request: EventReviewRequest):
             if event["review_only"]:
                 raise HTTPException(status_code=409, detail="Confira a possível correspondência no Google Agenda. Nenhum evento será criado automaticamente para este cancelamento ambíguo.")
 
-            blocking = connection.execute(
-                """
-                SELECT title FROM events
-                WHERE user_id = 'demo' AND status = 'confirmed' AND id != ?
-                  AND starts_at < ? AND ends_at > ?
-                ORDER BY starts_at
-                """,
-                (str(event_id), event["ends_at"], event["starts_at"]),
+            candidate_start = datetime.fromisoformat(event["starts_at"])
+            candidate_end = datetime.fromisoformat(event["ends_at"])
+            confirmed = connection.execute(
+                """SELECT title, starts_at, ends_at FROM events
+                   WHERE user_id = 'demo' AND status = 'confirmed' AND id != ?""",
+                (str(event_id),),
             ).fetchall()
+            blocking = []
+            for item in confirmed:
+                try:
+                    item_start = datetime.fromisoformat(item["starts_at"])
+                    item_end = datetime.fromisoformat(item["ends_at"])
+                    if item_start < candidate_end and candidate_start < item_end:
+                        blocking.append(item)
+                except ValueError:
+                    continue
             if blocking:
                 names = ", ".join(item["title"] for item in blocking[:3])
                 raise HTTPException(
@@ -451,6 +485,11 @@ def review_event(event_id: UUID, request: EventReviewRequest):
                 ),
             )
             if result.rowcount == 0:
+                if calendar_event_id:
+                    try:
+                        delete_calendar_event(calendar_event_id)
+                    except (HttpError, GoogleAuthError, OSError):
+                        pass
                 raise HTTPException(status_code=409, detail="O compromisso foi alterado. Atualize a tela.")
             _audit_decision(connection, "meeting", str(event_id), "confirmed", None, "confirmed")
             return {
@@ -840,7 +879,7 @@ def chat(request: ChatRequest):
         raise HTTPException(status_code=422, detail="A mensagem não pode ser vazia.")
 
     try:
-        intent = detect_intent(message)
+        intent = detect_intent(message, request.history)
     except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
@@ -861,6 +900,11 @@ def chat(request: ChatRequest):
         )
 
     if intent["intent"] == "other":
+        if any(term in message.casefold() for term in ("cancel", "desmarc", "remov")):
+            return {
+                "reply": "Para cancelar ou alterar um compromisso, abra a Agenda ou Aprovações e use a ação do item.",
+                "action": None,
+            }
         try:
             reply = generate_natural_response(
                 "Você é a EunomIA, uma assistente pessoal que conversa em português "
@@ -985,12 +1029,15 @@ def google_auth():
 
 @app.get("/api/integrations/google/callback")
 @account_operation
-def google_callback(request: Request, code: str, state: str):
+def google_callback(request: Request, code: str | None = None, state: str | None = None,
+                    error: str | None = None):
+    if error or not code or not state:
+        return RedirectResponse(f"{frontend_origin}/?google=denied")
     try:
         finish_oauth(str(request.url), state)
     except (ValueError, RuntimeError) as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return RedirectResponse("http://localhost:5173/?google=connected")
+        return RedirectResponse(f"{frontend_origin}/?google=error")
+    return RedirectResponse(f"{frontend_origin}/?google=connected")
 
 
 @app.post("/api/integrations/google/sync")

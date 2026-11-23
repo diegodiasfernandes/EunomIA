@@ -32,6 +32,8 @@ class EmailScanTests(unittest.TestCase):
                 connection.execute(f"DELETE FROM {table}")
         self.clock = patch("app.google_integration.datetime", wraps=datetime).start()
         self.clock.now.return_value = datetime(2026, 11, 5, 15, tzinfo=timezone.utc)
+        self.main_clock = patch("app.main.datetime", wraps=datetime).start()
+        self.main_clock.now.return_value = datetime(2026, 11, 5, 15, tzinfo=timezone.utc)
         self.threads = {"atlas": [{"id": "first", "thread_id": "atlas", "subject": "Projeto Atlas",
                                    "sender": "Ana <ana@example.test>", "received_at": "2026-11-04T10:00:00-03:00",
                                    "snippet": "", "body": "Vamos alinhar o Projeto Atlas."}]}

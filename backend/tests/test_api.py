@@ -327,6 +327,27 @@ class GoogleIntegrationApiTests(unittest.TestCase):
         )
         self.assertFalse(meeting["calendar_synced"])
 
+    def test_confirmed_meeting_can_be_cancelled_and_removed_from_calendar(self):
+        event_id = "b1f94185-d280-43a8-9b26-62c48c7f4004"
+        from app.db import connect
+
+        with connect() as connection:
+            connection.execute(
+                """INSERT INTO events(
+                       id, user_id, provider_id, title, starts_at, ends_at, status, source, updated_at
+                   ) VALUES (?, 'demo', 'calendar-event-id', 'Reunião confirmada',
+                             '2030-08-01T10:00:00-03:00', '2030-08-01T11:00:00-03:00',
+                             'confirmed', 'manual', '2030-07-01T00:00:00-03:00')""",
+                (event_id,),
+            )
+
+        with patch("app.main.delete_calendar_event") as delete:
+            response = self.client.patch(f"/api/events/{event_id}", json={"status": "cancelled"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+        delete.assert_called_once_with("calendar-event-id")
+
     def test_reviewing_email_deadline_accepts_to_pending_or_rejects(self):
         task_ids = {
             "accepted": "32e8bc65-588a-443e-97fc-43c1c637ef10",

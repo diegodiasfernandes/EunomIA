@@ -43,6 +43,14 @@ class TextHTML(HTMLParser):
             self.parts.append(data)
 
 
+def _execute_with_retries(request):
+    """Use Google's bounded retry support while keeping lightweight test doubles usable."""
+    try:
+        return request.execute(num_retries=5)
+    except TypeError:
+        return request.execute()
+
+
 def message_body(payload, gmail=None, message_id=None):
     plain, html, calendar = [], [], []
 
@@ -87,7 +95,8 @@ def load_threads(gmail, since, until):
         page = gmail.users().messages().list(
             userId="me", q=f"after:{lower - 1} before:{upper}", maxResults=500,
             **({"pageToken": token} if token else {}),
-        ).execute()
+        )
+        page = _execute_with_retries(page)
         count("gmail_pages")
         for reference in page.get("messages", []):
             if reference["id"] in seen_messages:
@@ -96,7 +105,8 @@ def load_threads(gmail, since, until):
             count("selected_messages")
             thread_id = reference.get("threadId")
             if not thread_id:
-                thread_id = gmail.users().messages().get(userId="me", id=reference["id"], format="minimal").execute()["threadId"]
+                request = gmail.users().messages().get(userId="me", id=reference["id"], format="minimal")
+                thread_id = _execute_with_retries(request)["threadId"]
             ids[thread_id] = None
         token = page.get("nextPageToken")
         if not token:
@@ -104,7 +114,8 @@ def load_threads(gmail, since, until):
     threads = {}
     count("threads_found", len(ids))
     for thread_index, thread_id in enumerate(ids, 1):
-        response = gmail.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        request = gmail.users().threads().get(userId="me", id=thread_id, format="full")
+        response = _execute_with_retries(request)
         messages = []
         for item in response.get("messages", []):
             if set(item.get("labelIds", [])) & {"TRASH", "SPAM", "DRAFT"}:
@@ -170,10 +181,10 @@ def fingerprint(kind, title, start, end=None):
     def canonical(value):
         if not value:
             return ""
-        date = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if date.tzinfo:
-            return str(int(date.timestamp()))
-        return value
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=scan_timezone())
+        return str(int(parsed.timestamp()))
     return hashlib.sha256(json.dumps([kind, normalized(title), canonical(start), canonical(end)]).encode()).hexdigest()
 
 

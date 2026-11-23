@@ -19,7 +19,7 @@ from .mail_scan import CalendarLookup, fingerprint, load_threads, meeting_times,
 from .event_matching import classify, people
 from .scan_diagnostics import diagnosed_scan, count, note
 
-if os.getenv("ENVIRONMENT", "development") == "development":
+if os.getenv("ENVIRONMENT") == "development":
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 SCOPES = [
@@ -31,6 +31,13 @@ SCOPES = [
 ]
 
 USER_ID = "demo"
+
+
+def oauth_redirect_uri() -> str:
+    configured = os.getenv("GOOGLE_REDIRECT_URI")
+    if configured:
+        return configured
+    return os.getenv("BACKEND_ORIGIN", "http://localhost:8000").rstrip("/") + "/api/integrations/google/callback"
 EMAIL_EVENT_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -186,7 +193,7 @@ def _client_config() -> dict:
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [
-                "http://localhost:8000/api/integrations/google/callback"
+                oauth_redirect_uri()
             ],
         }
     }
@@ -199,7 +206,7 @@ def begin_oauth() -> str:
         scopes=SCOPES,
     )
 
-    flow.redirect_uri = "http://localhost:8000/api/integrations/google/callback"
+    flow.redirect_uri = oauth_redirect_uri()
 
     authorization_url, state = flow.authorization_url(
         access_type="offline",
@@ -258,7 +265,7 @@ def finish_oauth(authorization_response: str, state: str) -> str:
         state=state,
     )
 
-    flow.redirect_uri = "http://localhost:8000/api/integrations/google/callback"
+    flow.redirect_uri = oauth_redirect_uri()
     flow.code_verifier = stored["code_verifier"]
 
     flow.fetch_token(

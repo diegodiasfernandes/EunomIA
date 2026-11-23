@@ -65,7 +65,9 @@ export function ActionBar({
     onEdit: () => void;
 }) {
     const confirmLabel =
-        item.record.pending_action === "cancel"
+        item.kind === "meeting" && item.record.status === "confirmed"
+            ? "Cancelar reunião"
+            : item.record.pending_action === "cancel"
             ? "Confirmar cancelamento"
             : item.record.pending_action === "update"
               ? "Confirmar alteração"
@@ -80,6 +82,7 @@ export function ActionBar({
     const [confirmingCancellation, setConfirmingCancellation] = useState(false);
     const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
     const discard = item.record.pending_action ? actions.rejectChange : actions.discard;
+    const confirmedMeeting = item.kind === "meeting" && item.record.status === "confirmed";
 
     return (
         <div>
@@ -88,7 +91,7 @@ export function ActionBar({
                     variant="primary"
                     className="flex-1"
                     onClick={() =>
-                        item.record.pending_action === "cancel"
+                        confirmedMeeting || item.record.pending_action === "cancel"
                             ? setConfirmingCancellation(true)
                             : item.kind === "meeting" && item.record.possible_duplicate
                               ? setConfirmingDuplicate(true) : actions.confirm()
@@ -104,15 +107,15 @@ export function ActionBar({
                     )}
                     {actions.busy === "confirmed" ? "Confirmando..." : confirmLabel}
                 </Button>
-                <IconButton
+                {!confirmedMeeting && <IconButton
                     label="Editar"
                     onClick={onEdit}
                     disabled={busy || Boolean(item.record.pending_action)}
                     className="border border-line-strong"
                 >
                     <PencilSimpleIcon size={17} />
-                </IconButton>
-                <IconButton
+                </IconButton>}
+                {!confirmedMeeting && <IconButton
                     label={item.record.pending_action ? "Manter decisão anterior" : "Descartar"}
                     onClick={discard}
                     disabled={busy}
@@ -123,7 +126,7 @@ export function ActionBar({
                     ) : (
                         <TrashIcon size={17} />
                     )}
-                </IconButton>
+                </IconButton>}
             </div>
             {actions.error && (
                 <p role="alert" className="mt-2 text-[12.5px] leading-snug text-danger">

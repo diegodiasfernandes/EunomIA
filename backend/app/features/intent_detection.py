@@ -1,5 +1,5 @@
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from app.mail_scan import scan_timezone
 
 from app.assistant import generate_structured_response
 
@@ -40,13 +40,15 @@ EVENT_SCHEMA = {
 }
 
 
-def detect_intent(message: str) -> dict:
+def detect_intent(message: str, history: list[str] | None = None) -> dict:
     if not message.strip():
         raise ValueError("Mensagem vazia")
 
-    now = datetime.now(
-        ZoneInfo("America/Fortaleza")
-    )
+    now = datetime.now(scan_timezone())
+
+    conversation = "\n".join(
+        f"- {item.strip()}" for item in (history or []) if item.strip()
+    ) or "(sem mensagens anteriores)"
 
     prompt = f"""
 Você é o assistente de agenda EunomIA.
@@ -77,6 +79,9 @@ Regras:
 9. Use datas no formato YYYY-MM-DD e horários no formato HH:MM.
 10. Para campos desconhecidos, retorne "".
 11. Não execute nenhuma ação de gravação.
+
+Conversa anterior (da mais antiga para a mais recente):
+{conversation}
 
 Mensagem:
 {message}

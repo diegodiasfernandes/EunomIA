@@ -21,8 +21,12 @@ export function useChatSession() {
         setMessages((current) => [...current, { ...message, id: crypto.randomUUID() }]);
 
     function send(text: string) {
+        const history = messages
+            .filter((message) => !message.failed)
+            .slice(-10)
+            .map((message) => `${message.role === "user" ? "Usuario" : "EunomIA"}: ${message.text}`);
         append({ role: "user", text });
-        chat.mutate(text, {
+        chat.mutate({ message: text, history }, {
             onSuccess: (response) => {
                 if (response.action !== "record_confirmation_required") {
                     append({ role: "assistant", text: response.reply });

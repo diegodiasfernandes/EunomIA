@@ -121,8 +121,8 @@ export const api = {
 
     addTask: (task: Task) => http.post("/api/tasks", task).then((r) => r.data),
 
-    chat: (message: string) =>
-        http.post<ChatResponse>("/api/chat", { message }, { timeout: 90_000 }).then((r) => r.data),
+    chat: (message: string, history: string[] = []) =>
+        http.post<ChatResponse>("/api/chat", { message, history }, { timeout: 90_000 }).then((r) => r.data),
 
     // Each thread goes through Gemini, so a scan can take minutes.
     syncEmails: (range: SyncRange) =>
